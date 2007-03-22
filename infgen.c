@@ -1,7 +1,7 @@
 /*
  * infgen.c
- * Copyright (C) 2005, 2006 Mark Adler, all rights reserved.
- * Version 1.3  23 Jul 2006
+ * Copyright (C) 2005-2007 Mark Adler, all rights reserved.
+ * Version 1.4  21 Mar 2007
  *
  * Read a zlib, gzip, or raw deflate stream from stdin and write a defgen
  * compatible stream representing that input to stdout (though any specific
@@ -11,13 +11,14 @@
  * data is never generated) -- all that is checked is that the trailer is
  * present.
  *
- * Usage: infgen [-n] [-s] < foo.gz > foo.def
+ * Usage: infgen [-n] [-d] [-s] < foo.gz > foo.def
  *
  * where foo.gz is a gzip file (it could have been a zlib or raw deflate stream
  * as well), and foo.def is a defgen description of the file or stream, which
- * is a readable text format.  The -n option will supress the dynamic tree
- * description in the output.  The -s option will write out comments with
- * statistics for each deflate block.
+ * is a readable text format.  The -n option supresses the tree description
+ * in the output.  The -d option shows the raw dynamic header information as
+ * comments.  The -s option will write out comments with statistics for each
+ * deflate block.
  */
 
 /* Version history:
@@ -31,6 +32,10 @@
                      Show the gzip file name if present
                      Replace cryptic error codes with descriptive messages
                      Correct error messages for incomplete deflate stream
+   1.4  21 Mar 2007  Add -d option for showing the raw dynamic block header
+                       information as it comes in, as comments (for checking
+                       initial gzip/deflate fragments for sensibility)
+                     Allow multiple options after the initial dash
  */
 
 #include <stdio.h>          /* putc(), fprintf(), getc(), fputs(), fflush(), */
@@ -56,6 +61,7 @@
 struct state {
     /* output state */
     int tree;                   /* true to output dynamic tree description */
+    int draw;                   /* true to show dynamic descriptor */
     int lit;                    /* state within literal or data line */
     unsigned max;               /* maximum distance (bytes so far) */
     FILE *out;                  /* output file */
@@ -481,20 +487,40 @@ local int dynamic(struct state *s)
         {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
     /* get number of lengths in each table, check lengths */
+    if (s->lit) { putc('\n', s->out); s->lit = 0; }
     nlen = bits(s, 5) + 257;
+    if (s->draw)
+        fprintf(s->out, "! %d length codes\n", nlen);
     ndist = bits(s, 5) + 1;
+    if (s->draw)
+        fprintf(s->out, "! %d distance codes\n", ndist);
     ncode = bits(s, 4) + 4;
+    if (s->draw)
+        fprintf(s->out, "! %d code length codes\n", ncode);
     if (nlen > MAXLCODES || ndist > MAXDCODES)
         return -3;                      /* bad counts */
 
     /* read code length code lengths (really), missing lengths are zero */
-    for (index = 0; index < ncode; index++)
+    if (s->draw) {
+        fputs("! code", s->out);
+        s->lit = 1;
+    }
+    for (index = 0; index < ncode; index++) {
         lengths[order[index]] = bits(s, 3);
+        if (s->draw) {
+            if (index == 11)
+                fputs("\n! code", s->out);
+            fprintf(s->out, " %d:%d", order[index], lengths[order[index]]);
+        }
+    }
+    if (s->draw) {
+        putc('\n', s->out);
+        s->lit = 0;
+    }
     for (; index < 19; index++)
         lengths[order[index]] = 0;
 
     /* write code length code lengths */
-    if (s->lit) { putc('\n', s->out); s->lit = 0; }
     if (s->tree) {
         for (index = 0; index < 19; index++)
             if (lengths[index] != 0)
@@ -512,8 +538,15 @@ local int dynamic(struct state *s)
         int len;                /* last length to repeat */
 
         symbol = decode(s, &lencode);
-        if (symbol < 16)                /* length in 0..15 */
+        if (symbol < 16) {              /* length in 0..15 */
             lengths[index++] = symbol;
+            if (s->draw) {
+                if (index < nlen)
+                    fprintf(s->out, "! lenlen %d:%d\n", index, symbol);
+                else
+                    fprintf(s->out, "! distlen %d:%d\n", index - nlen, symbol);
+            }
+        }
         else {                          /* repeat instruction */
             len = 0;                    /* assume repeating zeros */
             if (symbol == 16) {         /* repeat last length 3..6 times */
@@ -527,6 +560,8 @@ local int dynamic(struct state *s)
                 symbol = 11 + bits(s, 7);
             if (index + symbol > nlen + ndist)
                 return -6;              /* too many lengths! */
+            if (s->draw)
+                fprintf(s->out, "! repeat %d %d times\n", len, symbol);
             while (symbol--)            /* repeat last or zero symbol times */
                 lengths[index++] = len;
         }
@@ -580,7 +615,7 @@ local int dynamic(struct state *s)
  *  -8:  dynamic block code description: invalid distance code lengths
  *  -9:  invalid literal/length or distance code in fixed or dynamic block
  */
-local int infgen(FILE *in, FILE *out, int tree, int stats)
+local int infgen(FILE *in, FILE *out, int tree, int draw, int stats)
 {
     struct state s;             /* input/output state */
     int last, type;             /* block information */
@@ -588,6 +623,7 @@ local int infgen(FILE *in, FILE *out, int tree, int stats)
 
     /* initialize output state */
     s.tree = tree;
+    s.draw = draw;
     s.stats = stats;
     s.lit = 0;
     s.max = 0;
@@ -705,22 +741,30 @@ local int midline = 0;
    for gzip and zlib streams, so any header information is discarded. */
 int main(int argc, char **argv)
 {
-    int tree, stats, ret, trail, n;
+    int tree, draw, stats, ret, trail, n;
     unsigned val;
     FILE *in, *out;
+    char *arg;
 
     /* process command line options */
     tree = 1;
+    draw = 0;
     stats = 0;
-    while (++argv, --argc) {
-        if (strcmp(*argv, "-n") == 0)
-            tree = 0;
-        else if (strcmp(*argv, "-s") == 0)
-            stats = 1;
-        else {
-            fprintf(stderr, "infgen error: invalid option %s\n", *argv);
+    while (--argc) {
+        arg = *++argv;
+        if (*arg++ != '-') {
+            fprintf(stderr, "infgen takes input through stdin\n");
             return 1;
         }
+        while (*arg)
+            switch (*arg++) {
+            case 'n':  tree = 0;  break;
+            case 'd':  draw = 1;  break;
+            case 's':  stats = 1;  break;
+            default:
+                fprintf(stderr, "infgen error: invalid option %c\n", *--arg);
+                return 1;
+            }
     }
 
     /* set input and output */
@@ -728,7 +772,7 @@ int main(int argc, char **argv)
     out = stdout;
 
     /* say who wrote this */
-    fputs("! infgen 1.3 output\n", out);
+    fputs("! infgen 1.4 output\n", out);
 
     /* process concatenated streams */
     do {
@@ -787,7 +831,7 @@ int main(int argc, char **argv)
         }
 
         /* process compressed data to produce a defgen description */
-        ret = infgen(in, out, tree, stats);
+        ret = infgen(in, out, tree, draw, stats);
 
         /* check return value and trailer size */
         if (ret > 0)
