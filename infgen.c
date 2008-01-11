@@ -1,7 +1,7 @@
 /*
  * infgen.c
  * Copyright (C) 2005-2007 Mark Adler, all rights reserved.
- * Version 1.4  21 Mar 2007
+ * Version 1.5  9 Jan 2008
  *
  * Read a zlib, gzip, or raw deflate stream from stdin and write a defgen
  * compatible stream representing that input to stdout (though any specific
@@ -36,6 +36,8 @@
                        information as it comes in, as comments (for checking
                        initial gzip/deflate fragments for sensibility)
                      Allow multiple options after the initial dash
+   1.5   9 Jan 2008  Treat no symbol for end-of-block as an error
+                     Fix error in use of error message table (inferr[])
  */
 
 #include <stdio.h>          /* putc(), fprintf(), getc(), fputs(), fflush(), */
@@ -235,7 +237,7 @@ struct huffman {
  * Decode a code from the stream s using huffman table h.  Return the symbol or
  * a negative value if there is an error.  If all of the lengths are zero, i.e.
  * an empty code, or if the code is incomplete and an invalid code is received,
- * then -9 is returned after reading MAXBITS bits.
+ * then -10 is returned after reading MAXBITS bits.
  */
 local int decode(struct state *s, struct huffman *h)
 {
@@ -276,7 +278,7 @@ local int decode(struct state *s, struct huffman *h)
         if (bitbuf == EOF) longjmp(s->env, 1);          /* out of input */
         if (left > 8) left = 8;
     }
-    return -9;                          /* ran out of codes */
+    return -10;                         /* ran out of codes */
 }
 
 /*
@@ -382,7 +384,7 @@ local int codes(struct state *s,
         else if (symbol > 256) {        /* length */
             /* get and compute length */
             symbol -= 257;
-            if (symbol >= 29) return -9;        /* invalid fixed code */
+            if (symbol >= 29) return -10;       /* invalid fixed code */
             len = lens[symbol] + bits(s, lext[symbol]);
 
             /* get and check distance */
@@ -580,6 +582,10 @@ local int dynamic(struct state *s)
                 fprintf(s->out, "dist %d %d\n", index - nlen, lengths[index]);
     }
 
+    /* check for end-of-block code -- there better be one! */
+    if (lengths[256] == 0)
+        return -9;
+
     /* build huffman table for literal/length codes */
     err = construct(&lencode, lengths, nlen);
     if (err < 0 || (err > 0 && nlen - lencode.count[0] != 1))
@@ -613,7 +619,8 @@ local int dynamic(struct state *s)
  *  -6:  dynamic block code description: repeat more than specified lengths
  *  -7:  dynamic block code description: invalid literal/length code lengths
  *  -8:  dynamic block code description: invalid distance code lengths
- *  -9:  invalid literal/length or distance code in fixed or dynamic block
+ *  -9:  dynamic block code description: missing end-of-block code
+ * -10:  invalid literal/length or distance code in fixed or dynamic block
  */
 local int infgen(FILE *in, FILE *out, int tree, int draw, int stats)
 {
@@ -719,6 +726,7 @@ local char *inferr[] = {
     "repeat more lengths than available",
     "invalid literal/length code set",
     "invalid distance code set",
+    "missing end-of-block code",
     "invalid code"
 };
 
@@ -772,7 +780,7 @@ int main(int argc, char **argv)
     out = stdout;
 
     /* say who wrote this */
-    fputs("! infgen 1.4 output\n", out);
+    fputs("! infgen 1.5 output\n", out);
 
     /* process concatenated streams */
     do {
@@ -838,7 +846,7 @@ int main(int argc, char **argv)
             fputs("infgen warning: incomplete deflate data\n", stderr);
         else if (ret < 0)
             fprintf(stderr, "infgen warning: invalid deflate data -- %s\n",
-                    -ret > 0 && -ret <= 9 ? inferr[1 - ret] : "unknown");
+                    -ret > 0 && -ret <= 10 ? inferr[-1 - ret] : "unknown");
         else {
             n = 0;
             while (n < trail && getc(in) != EOF)
