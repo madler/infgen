@@ -1,7 +1,7 @@
 /*
  * infgen.c
- * Copyright (C) 2005-2007 Mark Adler, all rights reserved.
- * Version 1.5  9 Jan 2008
+ * Copyright (C) 2005-2008 Mark Adler, all rights reserved.
+ * Version 1.6  12 Apr 2008
  *
  * Read a zlib, gzip, or raw deflate stream from stdin and write a defgen
  * compatible stream representing that input to stdout (though any specific
@@ -38,6 +38,7 @@
                      Allow multiple options after the initial dash
    1.5   9 Jan 2008  Treat no symbol for end-of-block as an error
                      Fix error in use of error message table (inferr[])
+   1.6  12 Apr 2008  Add stored block length comment for -s option
  */
 
 #include <stdio.h>          /* putc(), fprintf(), getc(), fputs(), fflush(), */
@@ -194,6 +195,10 @@ local int stored(struct state *s)
     cmp += (unsigned)octet << 8;
     if (len != (~cmp & 0xffff)) return -2;      /* didn't match complement! */
     s->blockin += 32;
+    if (s->stats) {
+        if (s->lit) { putc('\n', s->out); s->lit = 0; }
+        fprintf(s->out, "! stored length %u\n", len);
+    }
 
     /* update max distance */
     if (s->max < MAXDIST) {
