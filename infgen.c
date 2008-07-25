@@ -1,7 +1,7 @@
 /*
  * infgen.c
  * Copyright (C) 2005-2008 Mark Adler, all rights reserved.
- * Version 1.6  12 Apr 2008
+ * Version 1.7  25 Jul 2008
  *
  * Read a zlib, gzip, or raw deflate stream from stdin and write a defgen
  * compatible stream representing that input to stdout (though any specific
@@ -39,6 +39,8 @@
    1.5   9 Jan 2008  Treat no symbol for end-of-block as an error
                      Fix error in use of error message table (inferr[])
    1.6  12 Apr 2008  Add stored block length comment for -s option
+   1.7  25 Jul 2008  Add some diagnostic information to distance too far back
+                     Synchronize stdout and stderr for error messages
  */
 
 #include <stdio.h>          /* putc(), fprintf(), getc(), fputs(), fflush(), */
@@ -392,18 +394,22 @@ local int codes(struct state *s,
             if (symbol >= 29) return -10;       /* invalid fixed code */
             len = lens[symbol] + bits(s, lext[symbol]);
 
-            /* get and check distance */
+            /* get distance */
             symbol = decode(s, distcode);
             if (symbol < 0) return symbol;      /* invalid symbol */
             dist = dists[symbol] + bits(s, dext[symbol]);
+
+            /* check distance and write match */
+            if (s->lit) { putc('\n', s->out); s->lit = 0; }
             if (dist > s->max) {
-                fprintf(stderr, "infgen warning: distance too far back\n");
+                fflush(stdout);
+                fprintf(stderr, "infgen warning: distance too far back (%u)\n",
+                        dist - s->max);
                 s->max = MAXDIST;       /* issue warning only once */
             }
-
-            /* write match distance and length */
-            if (s->lit) { putc('\n', s->out); s->lit = 0; }
             fprintf(s->out, "match %d %u\n", len, dist);
+
+            /* update state for match */
             s->blockout += len;
             s->matches++;
             s->matchlen += len;
@@ -845,6 +851,7 @@ int main(int argc, char **argv)
 
         /* process compressed data to produce a defgen description */
         ret = infgen(in, out, tree, draw, stats);
+        fflush(stdout);
 
         /* check return value and trailer size */
         if (ret > 0)
