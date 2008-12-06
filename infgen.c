@@ -1,7 +1,7 @@
 /*
  * infgen.c
  * Copyright (C) 2005-2008 Mark Adler, all rights reserved.
- * Version 1.7  25 Jul 2008
+ * Version 1.8  5 Dec 2008
  *
  * Read a zlib, gzip, or raw deflate stream from stdin and write a defgen
  * compatible stream representing that input to stdout (though any specific
@@ -11,14 +11,16 @@
  * data is never generated) -- all that is checked is that the trailer is
  * present.
  *
- * Usage: infgen [-n] [-d] [-s] < foo.gz > foo.def
+ * Usage: infgen [-n] [-d] [-s] [-r] < foo.gz > foo.def
  *
  * where foo.gz is a gzip file (it could have been a zlib or raw deflate stream
  * as well), and foo.def is a defgen description of the file or stream, which
  * is a readable text format.  The -n option supresses the tree description
  * in the output.  The -d option shows the raw dynamic header information as
  * comments.  The -s option will write out comments with statistics for each
- * deflate block.
+ * deflate block.  The -r option forces interpretation of the input as a raw
+ * deflate stream, for those cases where the start of a raw stream accidentally
+ * mimics a zlib or gzip header.
  */
 
 /* Version history:
@@ -41,6 +43,9 @@
    1.6  12 Apr 2008  Add stored block length comment for -s option
    1.7  25 Jul 2008  Add some diagnostic information to distance too far back
                      Synchronize stdout and stderr for error messages
+   1.8   5 Dec 2008  Fix output header to match version
+                     Add -r (raw) option to ignore faux zlib/gzip headers
+                     Check distance too far back vs. zlib header window size
  */
 
 #include <stdio.h>          /* putc(), fprintf(), getc(), fputs(), fflush(), */
@@ -69,6 +74,7 @@ struct state {
     int draw;                   /* true to show dynamic descriptor */
     int lit;                    /* state within literal or data line */
     unsigned max;               /* maximum distance (bytes so far) */
+    unsigned win;               /* window size from zlib header or 32K */
     FILE *out;                  /* output file */
 
     /* input state */
@@ -203,9 +209,9 @@ local int stored(struct state *s)
     }
 
     /* update max distance */
-    if (s->max < MAXDIST) {
-        if (len > MAXDIST - s->max)
-            s->max = MAXDIST;
+    if (s->max < s->win) {
+        if (len > s->win - s->max)
+            s->max = s->win;
         else
             s->max += len;
     }
@@ -385,7 +391,7 @@ local int codes(struct state *s,
             /* write out the literal */
             putval(s, symbol, "literal");
             s->blockout += 1;
-            if (s->max < MAXDIST)
+            if (s->max < s->win)
                 s->max++;
         }
         else if (symbol > 256) {        /* length */
@@ -403,8 +409,9 @@ local int codes(struct state *s,
             if (s->lit) { putc('\n', s->out); s->lit = 0; }
             if (dist > s->max) {
                 fflush(stdout);
-                fprintf(stderr, "infgen warning: distance too far back (%u)\n",
-                        dist - s->max);
+                fprintf(stderr,
+                        "infgen warning: distance too far back (%u/%u)\n",
+                        dist, s->max);
                 s->max = MAXDIST;       /* issue warning only once */
             }
             fprintf(s->out, "match %d %u\n", len, dist);
@@ -413,9 +420,9 @@ local int codes(struct state *s,
             s->blockout += len;
             s->matches++;
             s->matchlen += len;
-            if (s->max < MAXDIST) {
-                if (len > MAXDIST - s->max)
-                    s->max = MAXDIST;
+            if (s->max < s->win) {
+                if (len > s->win - s->max)
+                    s->max = s->win;
                 else
                     s->max += len;
             }
@@ -633,7 +640,8 @@ local int dynamic(struct state *s)
  *  -9:  dynamic block code description: missing end-of-block code
  * -10:  invalid literal/length or distance code in fixed or dynamic block
  */
-local int infgen(FILE *in, FILE *out, int tree, int draw, int stats)
+local int infgen(FILE *in, FILE *out, unsigned win,
+                 int tree, int draw, int stats)
 {
     struct state s;             /* input/output state */
     int last, type;             /* block information */
@@ -645,6 +653,7 @@ local int infgen(FILE *in, FILE *out, int tree, int draw, int stats)
     s.stats = stats;
     s.lit = 0;
     s.max = 0;
+    s.win = win;
     s.out = out;
 
     /* initialize input state */
@@ -760,8 +769,8 @@ local int midline = 0;
    for gzip and zlib streams, so any header information is discarded. */
 int main(int argc, char **argv)
 {
-    int tree, draw, stats, ret, trail, n;
-    unsigned val;
+    int tree, draw, stats, head, ret, trail, n;
+    unsigned val, win;
     FILE *in, *out;
     char *arg;
 
@@ -769,6 +778,8 @@ int main(int argc, char **argv)
     tree = 1;
     draw = 0;
     stats = 0;
+    head = 1;
+    win = MAXDIST;
     while (--argc) {
         arg = *++argv;
         if (*arg++ != '-') {
@@ -780,6 +791,7 @@ int main(int argc, char **argv)
             case 'n':  tree = 0;  break;
             case 'd':  draw = 1;  break;
             case 's':  stats = 1;  break;
+            case 'r':  head = 0;  break;
             default:
                 fprintf(stderr, "infgen error: invalid option %c\n", *--arg);
                 return 1;
@@ -791,7 +803,7 @@ int main(int argc, char **argv)
     out = stdout;
 
     /* say who wrote this */
-    fputs("! infgen 1.5 output\n", out);
+    fputs("! infgen 1.8 output\n", out);
 
     /* process concatenated streams */
     do {
@@ -804,7 +816,7 @@ int main(int argc, char **argv)
             ret = 0;
             break;
         }
-        else if (n != EOF && val == 0x1f8b) {
+        else if (head && n != EOF && val == 0x1f8b) {
             /* gzip header */
             fputs("!\ngzip", out);
             midline = 1;
@@ -836,10 +848,12 @@ int main(int argc, char **argv)
             }
             trail = 8;
         }
-        else if (n != EOF && val % 31 == 0) {
+        else if (head && n != EOF && val % 31 == 0) {
             /* zlib header */
             fputs("!\nzlib\n", out);
-            if ((ret & 0xf) != 8) bail("unknown zlib compression method");
+            if ((ret & 0xf) != 8)
+                bail("unknown zlib compression method");
+            win = 1U << ((ret >> 4) + 8);       /* window size */
             trail = 4;
         }
         else {
@@ -850,7 +864,7 @@ int main(int argc, char **argv)
         }
 
         /* process compressed data to produce a defgen description */
-        ret = infgen(in, out, tree, draw, stats);
+        ret = infgen(in, out, win, tree, draw, stats);
         fflush(stdout);
 
         /* check return value and trailer size */
