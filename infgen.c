@@ -1,7 +1,7 @@
 /*
  * infgen.c
- * Copyright (C) 2005-2008 Mark Adler, all rights reserved.
- * Version 1.8  5 Dec 2008
+ * Copyright (C) 2005-2009 Mark Adler, all rights reserved.
+ * Version 1.9  9 Jun 2008
  *
  * Read a zlib, gzip, or raw deflate stream from stdin and write a defgen
  * compatible stream representing that input to stdout (though any specific
@@ -46,6 +46,8 @@
    1.8   5 Dec 2008  Fix output header to match version
                      Add -r (raw) option to ignore faux zlib/gzip headers
                      Check distance too far back vs. zlib header window size
+   1.9   9 Jun 2009  Add hack to avoid MSDOS end-of-line conversions
+                     Avoid VC compiler warning
  */
 
 #include <stdio.h>          /* putc(), fprintf(), getc(), fputs(), fflush(), */
@@ -53,6 +55,14 @@
 #include <stdlib.h>         /* exit() */
 #include <string.h>         /* strcmp() */
 #include <setjmp.h>         /* setjmp(), longjmp() */
+
+#if defined(MSDOS) || defined(OS2) || defined(_WIN32) || defined(__CYGWIN__)
+#  include <fcntl.h>
+#  include <io.h>
+#  define SET_BINARY_MODE(file) _setmode(_fileno(file), O_BINARY)
+#else
+#  define SET_BINARY_MODE(file)
+#endif
 
 #define local static
 
@@ -421,7 +431,7 @@ local int codes(struct state *s,
             s->matches++;
             s->matchlen += len;
             if (s->max < s->win) {
-                if (len > s->win - s->max)
+                if (len > (int)(s->win - s->max))
                     s->max = s->win;
                 else
                     s->max += len;
@@ -801,9 +811,10 @@ int main(int argc, char **argv)
     /* set input and output */
     in = stdin;
     out = stdout;
+    SET_BINARY_MODE(in);
 
     /* say who wrote this */
-    fputs("! infgen 1.8 output\n", out);
+    fputs("! infgen 1.9 output\n", out);
 
     /* process concatenated streams */
     do {
