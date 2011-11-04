@@ -1,7 +1,7 @@
 /*
  * infgen.c
- * Copyright (C) 2005-2009 Mark Adler, all rights reserved.
- * Version 1.9  9 Jun 2008
+ * Copyright (C) 2005-2011 Mark Adler, all rights reserved.
+ * Version 2.0  4 Nov 2011
  *
  * Read a zlib, gzip, or raw deflate stream from stdin and write a defgen
  * compatible stream representing that input to stdout (though any specific
@@ -48,6 +48,10 @@
                      Check distance too far back vs. zlib header window size
    1.9   9 Jun 2009  Add hack to avoid MSDOS end-of-line conversions
                      Avoid VC compiler warning
+   2.0   4 Nov 2011  Change fprintf to fputs to avoid warning
+                     Add block statistics on literals
+                     Allow bad zlib header method to proceed as possible raw
+                     Fix incorrect lenlen and distlen comments with -d
  */
 
 #include <stdio.h>          /* putc(), fprintf(), getc(), fputs(), fflush(), */
@@ -100,6 +104,7 @@ struct state {
     unsigned long symbols;      /* number of symbols (or stored bytes) */
     unsigned long matches;      /* number of matches */
     unsigned long matchlen;     /* total length of matches */
+    unsigned long litbits;      /* number of bits in literals */
         /* totals */
     unsigned long blocks;       /* total number of deflate blocks */
     unsigned long inbits;       /* total deflate bits in */
@@ -107,6 +112,7 @@ struct state {
     unsigned long symbnum;      /* total number of symbols */
     unsigned long matchnum;     /* total number of matches */
     unsigned long matchtot;     /* total length of matches */
+    unsigned long littot;       /* total bits in literals */
 
     /* input limit error return state for bits() and decode() */
     jmp_buf env;
@@ -123,7 +129,7 @@ local void putval(struct state *s, int val, char *command)
         (s->lit < 0 && (val < 0x20 || val > 0x7e))) {
         if (s->lit)
             putc('\n', s->out);
-        s->lit = fprintf(s->out, command);
+        s->lit = fputs(command, s->out);
     }
 
     /* string literal (already range-checked above) */
@@ -377,6 +383,7 @@ local int codes(struct state *s,
     int symbol;         /* decoded symbol */
     int len;            /* length for copy */
     unsigned dist;      /* distance for copy */
+    unsigned long beg;  /* bit count at start of symbol */
     static const short lens[29] = { /* Size base for length codes 257..285 */
         3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
         35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
@@ -394,6 +401,7 @@ local int codes(struct state *s,
 
     /* decode literals and length/distance pairs */
     do {
+        beg = s->blockin;
         symbol = decode(s, lencode);
         s->symbols++;
         if (symbol < 0) return symbol;  /* invalid symbol */
@@ -403,6 +411,7 @@ local int codes(struct state *s,
             s->blockout += 1;
             if (s->max < s->win)
                 s->max++;
+            s->litbits += s->blockin - beg;
         }
         else if (symbol > 256) {        /* length */
             /* get and compute length */
@@ -444,6 +453,13 @@ local int codes(struct state *s,
     if (s->lit) { putc('\n', s->out); s->lit = 0; }
     fputs("end\n", s->out);
     if (s->stats) {
+        if (s->symbols != s->matches)
+            fprintf(s->out, "! stats literals %.1f bits each (%lu/%lu)\n",
+                    s->litbits / (double)(s->symbols - s->matches),
+                    s->litbits, s->symbols - s->matches);
+        else
+            fprintf(s->out, "! stats literals none\n");
+        s->littot += s->litbits;
         if (s->matches) {
             fprintf(s->out, "! stats match %.1f%% (%lu x %.1f)\n",
                     100 * (s->matchlen / (double)(s->blockout)),
@@ -569,13 +585,13 @@ local int dynamic(struct state *s)
 
         symbol = decode(s, &lencode);
         if (symbol < 16) {              /* length in 0..15 */
-            lengths[index++] = symbol;
             if (s->draw) {
                 if (index < nlen)
                     fprintf(s->out, "! lenlen %d:%d\n", index, symbol);
                 else
                     fprintf(s->out, "! distlen %d:%d\n", index - nlen, symbol);
             }
+            lengths[index++] = symbol;
         }
         else {                          /* repeat instruction */
             len = 0;                    /* assume repeating zeros */
@@ -678,6 +694,7 @@ local int infgen(FILE *in, FILE *out, unsigned win,
     s.symbnum = 0;
     s.matchnum = 0;
     s.matchtot = 0;
+    s.littot = 0;
 
     /* return if bits() or decode() tries to read past available input */
     if (setjmp(s.env) != 0)             /* if came back here via longjmp() */
@@ -691,6 +708,7 @@ local int infgen(FILE *in, FILE *out, unsigned win,
             s.symbols = 0;
             s.matches = 0;
             s.matchlen = 0;
+            s.litbits = 0;
             last = bits(&s, 1);         /* one if last block */
             if (last)
                 fputs("last\n", s.out);
@@ -734,6 +752,8 @@ local int infgen(FILE *in, FILE *out, unsigned win,
                 s.outbytes / (double)s.blocks);
         fprintf(s.out, "! stats total block average %.1f symbols\n",
                 s.symbnum / (double)s.blocks);
+        fprintf(s.out, "! stats total literals %.1f bits each\n",
+                s.littot / (double)(s.symbnum - s.matchnum));
         if (s.matchnum)
             fprintf(s.out, "! stats total match %.1f%% (%lu x %.1f)\n",
                     100 * (s.matchtot / (double)(s.outbytes)),
@@ -814,7 +834,7 @@ int main(int argc, char **argv)
     SET_BINARY_MODE(in);
 
     /* say who wrote this */
-    fputs("! infgen 1.9 output\n", out);
+    fputs("! infgen 2.0 output\n", out);
 
     /* process concatenated streams */
     do {
@@ -859,12 +879,10 @@ int main(int argc, char **argv)
             }
             trail = 8;
         }
-        else if (head && n != EOF && val % 31 == 0) {
+        else if (head && n != EOF && val % 31 == 0 && (ret & 0xf) == 8) {
             /* zlib header */
             fputs("!\nzlib\n", out);
-            if ((ret & 0xf) != 8)
-                bail("unknown zlib compression method");
-            win = 1U << ((ret >> 4) + 8);       /* window size */
+            win = 1U << ((ret >> 4) + 8);   /* window size */
             trail = 4;
         }
         else {
