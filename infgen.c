@@ -1,27 +1,39 @@
 /*
  * infgen.c
  * Copyright (C) 2005-2013 Mark Adler, all rights reserved.
- * Version 2.1  13 Jan 2013
+ * Version 2.2  10 Feb 2013
  *
- * Read a zlib, gzip, or raw deflate stream from stdin and write a defgen
- * compatible stream representing that input to stdout (though any specific
- * zlib or gzip header information will be lost).  This is based on the puff.c
- * code to decompress deflate streams.  Note that neither the zlib nor the gzip
- * trailer is checked against the uncompressed data (in fact the uncompressed
- * data is never generated) -- all that is checked is that the trailer is
- * present.
+ * Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
+ * simple binary encoded stream representing that input to stdout.  This is
+ * based on the puff.c code to decompress deflate streams.  Note that neither
+ * the zlib nor the gzip trailer is checked against the uncompressed data (in
+ * fact the uncompressed data is never generated) -- only the fact that the
+ * trailer is present is checked.
  *
- * Usage: infgen [-q] [-n] [-d] [-s] [-r] < foo.gz > foo.def
+ * Usage: infgen [-d] [-q[q]] [-i] [-s] [-r] [-b] < foo.gz > foo.def
+ *    or: infgen [-d] [-q[q]] [-i] [-s] [-r] [-b] foo.gz > foo.def
  *
  * where foo.gz is a gzip file (it could have been a zlib or raw deflate stream
  * as well), and foo.def is a defgen description of the file or stream, which
- * is a readable text format.  The -q option supresses the output of literals,
- * matches, and tree descriptions.  The -n option supresses just the tree
- * descriptions in the output.  The -d option shows the raw dynamic header
- * information as comments.  The -s option writes out comments with statistics
- * for each deflate block and totals at the end.  The -r option forces
- * interpretation of the input as a raw deflate stream, for those cases where
- * the start of a raw stream coincidentally mimics a valid zlib header.
+ * is in a readable text format (unless -b is used).  The description includes
+ * the literal/length and distance code lengths for dynamic blocks.  The -d
+ * (dynamic) option generates directives to exactly reconstruct the dynamic
+ * block headers.  With -d, the code lengths are still included, but now as
+ * comments instead of directives.  The -q (quiet) option supresses the dynamic
+ * block code lengths, whether as directives or as comments.  The -qq (really
+ * quiet) option supresses the output of all deflate stream descriptions,
+ * leaving only the header and trailer information.  However if -qq is used
+ * with -s, the statistics information on the deflate stream is still included.
+ * The -i (info) option generates additional directives for gzip or zlib
+ * headers that permit their exact reconstruction.  The -s (statistics) option
+ * writes out comments with statistics for each deflate block and totals at the
+ * end.  The -r (raw) option forces the interpretation of the input as a raw
+ * deflate stream, for those cases where the start of a raw stream happens to
+ * mimic a valid zlib header.  The -b (binary) option writes a compact binary
+ * format instead of the defgen format.  In that case, any other options except
+ * -r are ignored.
+ *
+ * Both the defgen and compact binary formats are described below.
  */
 
 /*
@@ -31,41 +43,49 @@
     Content:
 
     The defgen format consists of lines of comments and directives.  Each line
-    is terminated by a single new line character ('\n').  The directives are
-    used to construct (or reconstruct) a deflate stream.  Each directive is a
-    word at the start of the line, possibly followed by parameters.
+    is terminated by a single new line character '\n', though it may be written
+    as "\r\n" on systems with end-of-line conversions.  defgen accepts either.
+    The directives are used to construct (or reconstruct) a deflate stream.
+    Each directive is a word at the start of the line, possibly followed by
+    parameters.
 
     Comments:
 
     defgen lines whose first character is an exclamation mark ('!') are
     comments, and are ignored by defgen.  Blank lines are also ignored.  All
-    other lines are directives.  (More on infgen-generated informational
-    comments below.)
+    other lines are directives.  If an exclamation mark appears after a
+    directive and not following a single quote, then it and the characters
+    after it are a comment and are ignored.  infgen-generated informational
+    comments are described below.
 
     Headers and trailers:
 
     The "gzip" directive writes a gzip header.  It is optionally preceded by
     directives bearing information to be contained in the gzip header: "name",
-    "comment", "extra", "time", "os", and "xfl".  The "name", "comment", and
-    "extra" directives use the same parameter format as "data" and "literal"
-    described below, and may be repeated over multiple lines for long content.
-    For "name" and "comment", the parameters do not include the terminating
-    zero.  For example:
+    "comment", "extra", "text', "time", "xfl", "os", and "hcrc".  The "name",
+    "comment", and "extra" directives use the same parameter format as "data"
+    and "literal" described below, and may be repeated over multiple lines for
+    long content. For "name" and "comment", the parameters do not include the
+    terminating zero.  For example:
 
     name 'linux-3.1.6.tar
 
     The "time", "os", and "xfl" (extra flags) directives each have a single
     numeric parameter. "os" and "xfl" have a parameter in the range of 0..255,
-    and "time" is in the the range of 0..2^32-1.  If "os" is not present, it is
-    taken to be 3 (for Unix).  If "xfl" or "time" is not present, the value is
-    taken to be zero.
+    and "time" is in the the range of 0..2^32-1.  infgen adds a comment after
+    the time parameter with the local time zone interpretation of that value.
+    If "os" is not present, it is taken to be 3 (for Unix).  If "xfl" or "time"
+    is not present, the value is taken to be zero.  "text" and "hcrc" have no
+    parameter.  "text" sets the text flag.  hcrc signals a two-byte crc of the
+    header.
 
     The "crc" directive writes the CRC-32 of the uncompressed data in
     little-endian order.  The "length" directive writes the length of the
     uncompressed data, modulo 2^32, in little-endian order.  The combination of
     a crc and a length in that order is the gzip trailer.  Either or both can
     optionally have a numeric parameter in the range 0..2^32-1 which would be
-    used in place of the value derived from the data.
+    used in place of the value derived from the data.  infgen does not write
+    those parameters.
 
     The "zlib" directive writes a zlib header.  The zlib directive has an
     optional numeric parameter which is the log-base-2 of the window size, in
@@ -84,7 +104,7 @@
 
     Deflate data between zlib or gzip headers and trailers, or raw deflate
     data, consists of a series of deflate blocks.  They are begun by the block
-    type directives: "stored", "static", or "dynamic", and all end with "end"
+    type directives: "stored", "fixed", or "dynamic", and all end with "end"
     after the contents of the block. The last block has the directive "last" on
     its own line before the block type directive.  The "stored" directive has
     an optional parameter which is the data that fills in the dummy bits to get
@@ -94,8 +114,8 @@
 
     Block headers:
 
-    Static blocks have no header, and proceed immediately to the data after the
-    static directive.
+    Fixed blocks have no header, and proceed immediately to the data after the
+    fixed directive.
 
     A stored block header has as many bits as needed to go to the next byte
     boundary (see the "stored" parameter above), followed by four bytes of
@@ -125,16 +145,17 @@
 
     The second, more proscriptive way to describe the header is to list the
     actual contents of the header, from which the code lengths are derived.
-    This is done with the directives "code", "lenlen", "distlen", "repeat", and
-    "zeros".  code has two numerical parameters, the symbol index and the
-    number of bits for that symbol. For code, the symbol index is in 0..18 and
-    bits are in 1..7.  lenlen, distlen, repeat, and zeros each have one
-    numerical parameter.  For lenlen and distlen it is the number of bits in
-    0..15.  Zero means that that symbol has no code and does not appear in the
-    block.  For repeat and zeros it is the number of times to repeat a bit
-    length.  repeat repeats the most recent length 3..6 times.  zeroes repeats
-    zeros 3..138 times.  dynamic is followed by all of the code directives, and
-    then by the lenlen followed by distlen directives, with repeat and zeros
+    This is done with the directives "count", "code", "lens", "repeat", and
+    "zeros".  count has two parameters: the number of length code lengths,
+    (257..286) and the number of distance code lengths (1..30).  code has two
+    numerical parameters, the symbol index (0..18) and the number of bits for
+    that symbol (1..7).  lens has any number of parameters in 0..15, where each
+    is the length of the corresponding literal/length or distance code.  A zero
+    length means that that symbol has no code and does not appear in the block.
+    repeat and zeros each have one parameter which is the number of times to
+    repeat a bit length.  repeat repeats the most recent length 3..6 times.
+    zeros repeats zeros 3..138 times.  dynamic is followed by all of the code
+    directives, and then by the len directives, with repeat and zeros
     directives mixed in.  The header description is complete upon encountering
     the first "literal", "match", or "end".
 
@@ -143,17 +164,17 @@
     All compressed data is represented using three directives: "data",
     "literal", and "match".  "data" and "literal" have the same parameters and
     both directly represent bytes of data.  "data" is used only in stored
-    blocks and literal is used only in static or dynamic blocks.  The
-    parameters of data and literal are a series of decimal numbers separated by
-    spaces, followed by a string of printable characters preceded by a single
-    quote and ended by the end of line.  A single quote may appear within the
-    string meaning a single quote in the data -- it does not end the string.
-    Either the numbers or the string are optional. Each decimal number is in
-    the range 0..255, and represents one byte of data.  The string can only
-    contain printable characters in the range 32..126.  All other byte values
-    must be represented as a decimal number.  match has two numerical
-    parameters. The first is the length of the match, in 3..258.  The second is
-    the distance back, in 1..32768.  The data ends with the "end" directive.
+    blocks and literal is used only in fixed or dynamic blocks.  The parameters
+    of data and literal are a series of decimal numbers separated by spaces,
+    followed by a string of printable characters preceded by a single quote and
+    ended by the end of line.  A single quote may appear within the string
+    meaning a single quote in the data -- it does not end the string.  Either
+    the numbers or the string are optional.  Each decimal number is in the
+    range 0..255, and represents one byte of data.  The string can only contain
+    printable characters in the range 32..126.  All other byte values must be
+    represented as a decimal number.  match has two numerical parameters. The
+    first is the length of the match, in 3..258.  The second is the distance
+    back, in 1..32768.  The data ends with the "end" directive.
 
     After the last "end":
 
@@ -164,32 +185,32 @@
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output.  E.g. "! infgen 2.1 output".
+    generated the defgen format output.  E.g. "! infgen 2.2 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
 
-    If the -d option is used and the -n option is not used, then the litlen
-    and dist directives are written as comments.  E.g. "! litlen 40 9".  If -n
-    is used, then they are not written at all.
+    If the -d option is used and the -n option is not used, then the litlen and
+    dist directives are written as comments.  E.g. "! litlen 40 9".  If -n is
+    used, then they are not written at all.
 
     With the -s option, infgen will generate statistics comments, all of which
     begin with "! stats ".  There are statistics for each deflate block, and
-    summary statistic after the last deflate block.  The statistics comments
-    are:
+    summary statistics after the last deflate block.  The statistics comments
+    are as follows:
 
     "! stats table n:m" gives the total number of bytes and bits in the dynamic
     block header, not including the three block identifier bits.  For example,
     "! stats table 58:6" indicating 58 bytes and 6 bits = 470 bits.
 
-    "! stats literals x.x bits each (n/m)" follows a static or dynamic block
-    and gives the average number of bits per literal, the total number of bits
-    for the literals in the block, and the number of literals in the block. For
+    "! stats literals x.x bits each (n/m)" follows a fixed or dynamic block and
+    gives the average number of bits per literal, the total number of bits for
+    the literals in the block, and the number of literals in the block. For
     example, "! stats literals 5.7 bits each (3793/664)".  If the block has no
     literals, then "! stats literals none" will be written.
 
-    "! stats matches x.x% (n x x.x)" follows a static or dynamic block and
-    gives the percentage of the uncompressed bytes in the block that came from
+    "! stats matches x.x% (n x x.x)" follows a fixed or dynamic block and gives
+    the percentage of the uncompressed bytes in the block that came from
     matches, the number of matches in the block, and the average match length.
     For example, "! stats matches 82.6% (183 x 17.2)".  If the block has no
     matches, then "! stats matches none" will be written.
@@ -222,6 +243,47 @@
     matches are summed: "! stats total matches 95.2% (33314520 x 13.0)" with
     the same format as "! stats matches".
 
+ */
+
+/*
+    Compact binary format (-b) deflate content description (gzip and zlib
+    headers and trailers are ignored):
+
+    0..0x7f:     high byte of distance-1, followed by low byte of
+                 distance-1, followed by length-3 (three bytes total)
+    0x80..0xfe:  literals 0..0x7e
+    0xff:        prefix byte, followed by ...
+     0, 1:       stored block (1 = last), followed by leftover bits (one byte)
+     2, 3:       fixed block (3 = last)
+     4, 5:       dynamic block (5 = last), then header terminated by a 0 byte
+     6, 7:       invalid block (7 = last)
+     8:          end of deflate stream, followed by leftover bits (one byte)
+     9..0x7e:    reserved (not used)
+     0x7f..0xff: literals 0x7f..0xff
+
+    dynamic block header:
+
+    The binary dynamic block header description is terminated by a zero, and
+    does not contain any zeros before that, in order to simplify decoding when
+    the header is not of interest.  The raw header is described, in order to
+    permit exact reconstruction if desired.  The header is this sequence of
+    bytes:
+
+    nlen - 256  number of length codes minus 256 (1..30, meaning 257..286)
+    ndist       number of distance codes (1..30)
+    ncode       number of code length codes (4..19)
+    ncode *     ncode bytes follow:
+        len+1   code length plus one (1..8, meaning 0..7)
+    opcodes *   enough opcodes follow to desribe nlen + ndist codes
+        opcode  each byte is 1..16 for lengths 0..15, or 17..20 to repeat the
+                    the last length 3..6 times, or 21..156 to repeat zeros
+                    3..138 times
+    0           a zero byte terminates the header description
+
+    Literals are coded on average to 1.5 bytes, though often less since low
+    literals are more common.  Length-distance pairs are coded as three bytes.
+    The coded form will be approximately 20% to 40% larger than the compressed
+    form.
  */
 
 /* Version history:
@@ -271,15 +333,33 @@
                      Add window size to zlib directive, if not 15
                      Add level and dict directives for zlib headers
                      Add extensive comments on the infgen output format
+   2.2  10 Feb 2013  Don't show gzip header extra directive if -i not given
+                     Don't show zlib header info directives if -i not given
+                     Note hcrc directive in format description
+                     Add "text" directive for that bit in gzip header flags
+                     Add "count" directive for dynamic headers
+                     Change "lenlen" and "distlen" directives to just "lens"
+                     Check for invalid code length codes in dynamic blocks
+                     Change "static" to "fixed" to be consistent with RFC 1951
+                     Add a compact binary output format (-b)
+                     Support an input path on the command line
+                     Detect when input is from tty, show help in that case
+                     Change options -n to -q, and -q to -qq
+                     Build struct state in main()
+                     Add local time description as a comment in time directive
  */
 
-#include <stdio.h>          /* putc(), fprintf(), getc(), fputs(), fflush(), */
-                            /* ungetc() (we assume two ungetc()'s are ok) */
+#include <stdio.h>          /* putc(), getc(), ungetc(), fputs(), fflush(),
+                               fopen(), fclose(), fprintf(), vfprintf(),
+                               stdout, stderr, FILE, EOF */
 #include <stdlib.h>         /* exit() */
-#include <stdint.h>         /* intmax_t */
-#include <inttypes.h>       /* PRIuMAX */
-#include <string.h>         /* strcmp() */
-#include <setjmp.h>         /* setjmp(), longjmp() */
+#include <string.h>         /* strerror() */
+#include <errno.h>          /* errno */
+#include <time.h>           /* time_t, gmtime(), asctime() */
+#include <stdarg.h>         /* va_list, va_start(), va_end() */
+#include <inttypes.h>       /* intmax_t, PRIuMAX */
+#include <setjmp.h>         /* jmp_buf, setjmp(), longjmp() */
+#include <unistd.h>         /* isatty() */
 
 #if defined(MSDOS) || defined(OS2) || defined(_WIN32) || defined(__CYGWIN__)
 #  include <fcntl.h>
@@ -292,6 +372,39 @@
 #define local static
 
 /*
+ * Print an error message and exit.  Return a value to use in an expression,
+ * even though the function will never return.
+ */
+local inline int bail(char *fmt, ...)
+{
+    va_list ap;
+
+    fflush(stdout);
+    fputs("infgen error: ", stderr);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    putc('\n', stderr);
+    exit(1);
+    return 0;
+}
+
+/*
+ * Print a warning to stderr.
+ */
+local inline void warn(char *fmt, ...)
+{
+    va_list ap;
+
+    fflush(stdout);
+    fputs("infgen warning: ", stderr);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    putc('\n', stderr);
+}
+
+/*
  * Maximums for allocations and loops.  It is not useful to change these --
  * they are fixed by the deflate format.
  */
@@ -300,11 +413,12 @@
 #define MAXDCODES 30            /* maximum number of distance codes */
 #define MAXCODES (MAXLCODES+MAXDCODES)  /* maximum codes lengths to read */
 #define FIXLCODES 288           /* number of fixed literal/length codes */
-#define MAXDIST 32768U          /* maximum match distance */
+#define MAXDIST 32768           /* maximum match distance */
 
 /* infgen() input and output state */
 struct state {
     /* output state */
+    int binary;                 /* true to write compact binary format */
     int data;                   /* true to output literals and matches */
     int tree;                   /* true to output dynamic tree */
     int draw;                   /* true to output dynamic descriptor */
@@ -343,9 +457,11 @@ struct state {
 
 #define LINELEN 79      /* target line length for data and literal commands */
 
-/* Write a byte in a literal or data defgen command, keeping the line length
-   reasonable and using string literals whenever possible. */
-local void putval(int val, char *command, int *col, FILE *out)
+/*
+ * Write a byte in a literal or data defgen command, keeping the line length
+ * reasonable and using string literals whenever possible.
+ */
+local inline void putval(int val, char *command, int *col, FILE *out)
 {
     /* new line if too long or decimal after string */
     if (*col == 0 || (*col < 0 ? -*col : *col) > LINELEN - 4 ||
@@ -383,7 +499,7 @@ local void putval(int val, char *command, int *col, FILE *out)
  *   buffer, using shift right, and new bytes are appended to the top of the
  *   bit buffer, using shift left.
  */
-local int bits(struct state *s, int need)
+local inline int bits(struct state *s, int need)
 {
     int next;           /* next byte from input */
     long val;           /* bit accumulator (can use up to 20 bits) */
@@ -407,7 +523,7 @@ local int bits(struct state *s, int need)
 }
 
 /*
- * Show statistics at end of block.
+ * Show and accumulate statistics at end of block.
  */
 local void end(struct state *s)
 {
@@ -463,6 +579,14 @@ local int stored(struct state *s)
         octet = getc(s->in);
         s->blockin += 8;
         if (octet == EOF) return 1;             /* not enough input */
+        if (s->binary) {
+            if (octet < 0x7f)
+                putc(octet + 0x80, s->out);
+            else {
+                putc(0xff, s->out);
+                putc(octet, s->out);
+            }
+        }
         if (s->data)
             putval(octet, "data", &s->col, s->out);
         s->blockout++;
@@ -497,7 +621,7 @@ struct huffman {
  * an empty code, or if the code is incomplete and an invalid code is received,
  * then -10 is returned after reading MAXBITS bits.
  */
-local int decode(struct state *s, struct huffman *h)
+local inline int decode(struct state *s, struct huffman *h)
 {
     int len;            /* current number of bits in code */
     int code;           /* len bits being decoded */
@@ -636,6 +760,14 @@ local int codes(struct state *s,
         if (symbol < 0) return symbol;  /* invalid symbol */
         if (symbol < 256) {             /* literal: symbol is the byte */
             /* write out the literal */
+            if (s->binary) {
+                if (symbol < 0x7f)
+                    putc(symbol + 0x80, s->out);
+                else {
+                    putc(0xff, s->out);
+                    putc(symbol, s->out);
+                }
+            }
             if (s->data)
                 putval(symbol, "literal", &s->col, s->out);
             s->blockout += 1;
@@ -655,15 +787,17 @@ local int codes(struct state *s,
             dist = dists[symbol] + bits(s, dext[symbol]);
 
             /* check distance and write match */
+            if (s->binary) {
+                putc((dist -1) >> 8, s->out);
+                putc(dist - 1, s->out);
+                putc(len - 3, s->out);
+            }
             if (s->data) {
                 if (s->col) { putc('\n', s->out); s->col = 0; }
                 fprintf(s->out, "match %d %u\n", len, dist);
             }
             if (dist > s->max) {
-                fflush(stdout);
-                fprintf(stderr,
-                        "infgen warning: distance too far back (%u/%u)\n",
-                        dist, s->max);
+                warn("distance too far back (%u/%u)", dist, s->max);
                 s->max = MAXDIST;       /* issue warning only once */
             }
 
@@ -779,10 +913,20 @@ local int dynamic(struct state *s)
     ncode = bits(s, 4) + 4;
     if (nlen > MAXLCODES || ndist > MAXDCODES)
         return -3;                      /* bad counts */
+    if (s->binary) {
+        putc(nlen - 256, s->out);
+        putc(ndist, s->out);
+        putc(ncode, s->out);
+    }
+    if (s->draw)
+        fprintf(s->out, "count %d %d %d\n", nlen, ndist, ncode);
 
     /* read code length code lengths (really), missing lengths are zero */
-    for (index = 0; index < ncode; index++)
+    for (index = 0; index < ncode; index++) {
         lengths[order[index]] = bits(s, 3);
+        if (s->binary)
+            putc(lengths[order[index]] + 1, s->out);
+    }
     for (; index < 19; index++)
         lengths[order[index]] = 0;
 
@@ -803,13 +947,12 @@ local int dynamic(struct state *s)
         int len;                /* last length to repeat */
 
         symbol = decode(s, &lencode);
+        if (symbol < 0) return symbol;  /* invalid symbol */
         if (symbol < 16) {              /* length in 0..15 */
-            if (s->draw) {
-                if (index < nlen)
-                    fprintf(s->out, "lenlen %d\n", symbol);
-                else
-                    fprintf(s->out, "distlen %d\n", symbol);
-            }
+            if (s->binary)
+                putc(symbol + 1, s->out);
+            if (s->draw)
+                putval(symbol, "lens", &s->col, s->out);
             lengths[index++] = symbol;
         }
         else {                          /* repeat instruction */
@@ -825,15 +968,22 @@ local int dynamic(struct state *s)
                 symbol = 11 + bits(s, 7);
             if (index + symbol > nlen + ndist)
                 return -6;              /* too many lengths! */
-            if (s->draw)
-                fprintf(s->out, "%s %d\n", len == -1 ? "repeat" : "zeros",
+            if (s->binary)
+                putc(symbol + (len == -1 ? 14 : 18), s->out);
+            if (s->draw) {
+                if (s->col) { putc('\n', s->out); s->col = 0; }
+                fprintf(s->out, "%s %d\n", len == -1 ? "zeros" : "repeat",
                         symbol);
+            }
             if (len == -1)
                 len = 0;
             while (symbol--)            /* repeat last or zero symbol times */
                 lengths[index++] = len;
         }
     }
+    if (s->binary)
+        putc(0, s->out);
+    if (s->draw && s->col) { putc('\n', s->out); s->col = 0; }
     if (s->stats)
         fprintf(s->out, "! stats table %" PRIuMAX ":%" PRIuMAX "\n",
                 (s->blockin - 3) >> 3, (s->blockin - 3) & 7);
@@ -890,79 +1040,76 @@ local int dynamic(struct state *s)
  *  -9:  dynamic block code description: missing end-of-block code
  * -10:  invalid literal/length or distance code in fixed or dynamic block
  */
-local int infgen(FILE *in, FILE *out, unsigned win,
-                 int data, int tree, int draw, int stats)
+local int infgen(struct state *s)
 {
-    struct state s;             /* input/output state */
     int last, type;             /* block information */
     int err;                    /* return value */
 
-    /* initialize output state */
-    s.data = data;
-    s.tree = tree;
-    s.draw = draw;
-    s.stats = stats;
-    s.col = 0;
-    s.max = 0;
-    s.win = win;
-    s.out = out;
-
     /* initialize input state */
-    s.bitcnt = 0;
-    s.bitbuf = 0;
-    s.in = in;
+    s->bitcnt = 0;
+    s->bitbuf = 0;
+
+    /* initialize output state */
+    s->col = 0;
+    s->max = 0;
 
     /* initialize statistics */
-    s.blocks = 0;
-    s.inbits = 0;
-    s.outbytes = 0;
-    s.symbnum = 0;
-    s.matchnum = 0;
-    s.matchtot = 0;
-    s.littot = 0;
+    s->blocks = 0;
+    s->inbits = 0;
+    s->outbytes = 0;
+    s->symbnum = 0;
+    s->matchnum = 0;
+    s->matchtot = 0;
+    s->littot = 0;
 
     /* return if bits() or decode() tries to read past available input */
-    if (setjmp(s.env) != 0)             /* if came back here via longjmp() */
+    if (setjmp(s->env) != 0)            /* if came back here via longjmp() */
         err = 1;                        /* then skip do-loop, return error */
     else {
         /* process blocks until last block or error */
         do {
-            if (s.data)
-                fputs("!\n", s.out);
-            s.reach = 0;
-            s.blockin = 0;
-            s.blockout = 0;
-            s.symbols = 0;
-            s.matches = 0;
-            s.matchlen = 0;
-            s.litbits = 0;
-            last = bits(&s, 1);         /* one if last block */
-            if (s.data && last)
-                fputs("last\n", s.out);
-            type = bits(&s, 2);         /* block type 0..3 */
+            if (s->data)
+                fputs("!\n", s->out);
+            s->reach = 0;
+            s->blockin = 0;
+            s->blockout = 0;
+            s->symbols = 0;
+            s->matches = 0;
+            s->matchlen = 0;
+            s->litbits = 0;
+            last = bits(s, 1);          /* one if last block */
+            if (s->data && last)
+                fputs("last\n", s->out);
+            type = bits(s, 2);          /* block type 0..3 */
+            if (s->binary) {
+                putc(0xff, s->out);
+                putc((type << 1) + last, s->out);
+            }
             switch (type) {
             case 0:
-                if (s.data) {
-                    if (s.bitbuf)
-                        fprintf(s.out, "stored %d\n", s.bitbuf);
+                if (s->binary)
+                    putc(s->bitbuf, s->out);
+                if (s->data) {
+                    if (s->bitbuf)
+                        fprintf(s->out, "stored %d\n", s->bitbuf);
                     else
-                        fputs("stored\n", s.out);
+                        fputs("stored\n", s->out);
                 }
-                err = stored(&s);
+                err = stored(s);
                 break;
             case 1:
-                if (s.data)
-                    fputs("static\n", s.out);
-                err = fixed(&s);
+                if (s->data)
+                    fputs("fixed\n", s->out);
+                err = fixed(s);
                 break;
             case 2:
-                if (s.data)
-                    fputs("dynamic\n", s.out);
-                err = dynamic(&s);
+                if (s->data)
+                    fputs("dynamic\n", s->out);
+                err = dynamic(s);
                 break;
             default:
-                if (s.data)
-                    fputs("block3\nend\n", s.out);
+                if (s->data)
+                    fputs("block3\nend\n", s->out);
                 err = -1;
             }
             if (err != 0) break;        /* return with error */
@@ -970,30 +1117,35 @@ local int infgen(FILE *in, FILE *out, unsigned win,
     }
 
     /* finish off dangling literal line */
-    if (s.data && s.col) putc('\n', s.out);
+    if (s->data && s->col) putc('\n', s->out);
 
     /* write the leftovers information */
-    if (s.data && s.bitcnt && s.bitbuf)
-        fprintf(s.out, "bound %d\n", s.bitbuf);
+    if (s->binary) {
+        putc(0xff, s->out);
+        putc(8, s->out);
+        putc(s->bitbuf, s->out);
+    }
+    if (s->data && s->bitcnt && s->bitbuf)
+        fprintf(s->out, "bound %d\n", s->bitbuf);
 
     /* write final statistics */
-    if (s.stats) {
-        fprintf(s.out, "! stats total inout %" PRIuMAX ":%" PRIuMAX
+    if (s->stats) {
+        fprintf(s->out, "! stats total inout %" PRIuMAX ":%" PRIuMAX
                        " (%" PRIuMAX ") %" PRIuMAX "\n",
-                s.inbits >> 3, s.inbits & 7, s.symbnum, s.outbytes);
-        fprintf(s.out, "! stats total block average %.1f uncompressed\n",
-                s.outbytes / (double)s.blocks);
-        fprintf(s.out, "! stats total block average %.1f symbols\n",
-                s.symbnum / (double)s.blocks);
-        fprintf(s.out, "! stats total literals %.1f bits each\n",
-                s.littot / (double)(s.symbnum - s.matchnum));
-        if (s.matchnum)
-            fprintf(s.out, "! stats total matches %.1f%% (%" PRIuMAX
+                s->inbits >> 3, s->inbits & 7, s->symbnum, s->outbytes);
+        fprintf(s->out, "! stats total block average %.1f uncompressed\n",
+                s->outbytes / (double)s->blocks);
+        fprintf(s->out, "! stats total block average %.1f symbols\n",
+                s->symbnum / (double)s->blocks);
+        fprintf(s->out, "! stats total literals %.1f bits each\n",
+                s->littot / (double)(s->symbnum - s->matchnum));
+        if (s->matchnum)
+            fprintf(s->out, "! stats total matches %.1f%% (%" PRIuMAX
                            " x %.1f)\n",
-                    100 * (s.matchtot / (double)(s.outbytes)),
-                    s.matchnum, s.matchtot / (double)(s.matchnum));
+                    100 * (s->matchtot / (double)(s->outbytes)),
+                    s->matchnum, s->matchtot / (double)(s->matchnum));
         else
-            fprintf(s.out, "! stats total no matches\n");
+            fprintf(s->out, "! stats total no matches\n");
     }
 
     /* return error state */
@@ -1014,73 +1166,114 @@ local char *inferr[] = {
     "invalid code"
 };
 
-/* print error message and exit (return a value to use in expression) */
-local int bail(char *why)
+/* provide help for command options */
+local void help(void)
 {
-    fflush(stdout);
-    fprintf(stderr, "infgen error: %s\n", why);
-    exit(1);
-    return 0;
+    fputs(
+          "\n"
+          "Usage:\n"
+          "\n"
+          "  infgen [-dq[q]isrb] input_path > output_path\n"
+          "  infgen [-dq[q]isrb] < input_path > output_path\n"
+          "\n"
+          "    -d   Write raw dynamic header (code lengths in comments)\n"
+          "    -q   Do not write dynamic code lengths (comments or not)\n"
+          "    -qq  Do not write deflate stream description at all\n"
+          "    -i   Include detailed gzip / zlib header descriptions\n"
+          "    -s   Include deflate block statistics (as comments)\n"
+          "    -r   Assume raw deflate data -- do not look for headers\n"
+          "    -b   Write compact binary format (only -r honored)\n"
+          "\n",
+          stderr);
 }
 
 /* get next byte of input, or abort if none */
-#define NEXT(in) ((n = getc(in)) != EOF ? n : \
-                  (putc('\n', out), bail("unexpected end of input")))
+#define NEXT(in) ((n = getc(in)) != EOF ? n : (col ? putc('\n', s.out) : 0, \
+                  bail("unexpected end of input")))
 
-/* Read a gzip, zlib, or raw deflate stream from stdin, and write a defgen
-   description of the stream to stdout. defgen only provides simple headers
-   for gzip and zlib streams, so most header information is discarded. */
+/* Read a gzip, zlib, or raw deflate stream from stdin or a provided path, and
+   write a defgen description of the stream to stdout. */
 int main(int argc, char **argv)
 {
-    int info, data, tree, draw, stats, head, ret, trail, n;
+    int info, head, wrap;
+    int ret, trail, n;
     unsigned val, win;
     unsigned long num;
-    FILE *in, *out;
-    char *arg;
+    char *arg, *path;
     int col;
+    struct state s;
 
     /* process command line options */
+    path = NULL;
     info = 0;
-    data = 1;
-    tree = 1;
-    draw = 0;
-    stats = 0;
     head = 1;
-    win = MAXDIST;
+    wrap = 1;
+    s.binary = 0;
+    s.data = 1;
+    s.tree = 1;
+    s.draw = 0;
+    s.stats = 0;
+    s.win = MAXDIST;
     while (--argc) {
         arg = *++argv;
         if (*arg++ != '-') {
-            fprintf(stderr, "infgen takes input through stdin\n");
-            return 1;
+            if (path != NULL)
+                bail("only one input file permitted (%s)", arg - 1);
+            path = arg - 1;
+            continue;
         }
         while (*arg)
             switch (*arg++) {
-            case 'i':  info = 1;  break;
-            case 'q':  data = 0;  /* fall to -n to also not output trees */
-            case 'n':  tree = 0;  break;
-            case 'd':  draw = 1;  break;
-            case 's':  stats = 1;  break;
-            case 'r':  head = 0;  break;
+            case 'i':  info = 1;        break;
+            case 'b':  s.binary = 1;    break;
+            case 'q':
+                if (s.tree)
+                    s.tree = 0;
+                else
+                    s.data = 0;
+                break;
+            case 'd':  s.draw = 1;      break;
+            case 's':  s.stats = 1;     break;
+            case 'r':  head = 0;        break;
+            case 'h':  help();          return 0;
             default:
-                fprintf(stderr, "infgen error: invalid option %c\n", *--arg);
-                return 1;
+                bail("invalid option '%c' (type infgen for help)", *--arg);
             }
     }
+    if (s.data == 0)
+        s.draw = 0;
 
     /* set input and output */
-    in = stdin;
-    out = stdout;
-    SET_BINARY_MODE(in);
+    if (path == NULL) {
+        if (isatty(0)) {
+            help();
+            return 0;
+        }
+        errno = 0;          /* isatty(0) false leaves errno as ENOTTY */
+        s.in = stdin;
+        SET_BINARY_MODE(s.in);
+    }
+    else {
+        s.in = fopen(path, "rb");
+        if (s.in == NULL)
+            bail("could not open input file %s", path);
+    }
+    s.out = stdout;
+    if (s.binary) {
+        info = wrap = s.data = s.tree = s.draw = s.stats = 0;
+        SET_BINARY_MODE(s.out);
+    }
     col = 0;
 
     /* say what wrote this */
-    fputs("! infgen 2.1 output\n", out);
+    if (wrap)
+        fputs("! infgen 2.2 output\n", s.out);
 
     /* process concatenated streams */
     do {
         /* skip header, if any, save header type as trailer size */
-        ret = getc(in);
-        n = getc(in);
+        ret = getc(s.in);
+        n = getc(s.in);
         val = ((unsigned)ret << 8) + (unsigned)n;   /* magic two bytes */
         if (ret == EOF) {
             /* nothing after the last stream, or empty file */
@@ -1089,127 +1282,139 @@ int main(int argc, char **argv)
         }
         else if (head && n != EOF && val == 0x1f8b) {
             /* gzip header */
-            fputs("!\n", out);
-            if (NEXT(in) != 8) bail("unknown gzip compression method");
-            ret = NEXT(in);
-            if (ret & 0xe0) bail("reserved gzip flags set");
-            num = NEXT(in);
-            num += NEXT(in) << 8;
-            num += NEXT(in) << 16;
-            num += NEXT(in) << 24;
-            if (info && num)
-                fprintf(out, "time %lu\n", num);
-            val = NEXT(in);
+            if (wrap)
+                fputs("!\n", s.out);
+            if (NEXT(s.in) != 8) bail("unknown gzip compression method %d", n);
+            ret = NEXT(s.in);
+            if (ret & 0xe0) bail("reserved gzip flags set (%02x)", ret);
+            if (info && (ret & 1))
+                fputs("text\n", s.out);
+            num = NEXT(s.in);
+            num += NEXT(s.in) << 8;
+            num += NEXT(s.in) << 16;
+            num += NEXT(s.in) << 24;
+            if (info && num) {
+                time_t t = num;
+                fprintf(s.out, "time %lu ! UTC %s", num, asctime(gmtime(&t)));
+            }
+            val = NEXT(s.in);
             if (info && val)
-                fprintf(out, "xfl %u\n", val);
-            val = NEXT(in);
+                fprintf(s.out, "xfl %u\n", val);
+            val = NEXT(s.in);
             if (info && val != 3)
-                fprintf(out, "os %u\n", val);
+                fprintf(s.out, "os %u\n", val);
             if (ret & 4) {              /* extra field */
-                val = NEXT(in);
-                val += NEXT(in) << 8;
-                if (val == 0)
-                    fputs("extra '\n", out);
+                val = NEXT(s.in);
+                val += NEXT(s.in) << 8;
+                if (val == 0) {
+                    if (info)
+                        fputs("extra '\n", s.out);
+                }
                 else
                     do {
                         if (info)
-                            putval(NEXT(in), "extra", &col, out);
+                            putval(NEXT(s.in), "extra", &col, s.out);
                     } while (--val);
-                if (info && col) { putc('\n', out); col = 0; }
+                if (info && col) { putc('\n', s.out); col = 0; }
             }
             if (ret & 8) {              /* file name */
-                if (NEXT(in) == 0) {
+                if (NEXT(s.in) == 0) {
                     if (info)
-                        fputs("name '\n", out);
+                        fputs("name '\n", s.out);
                 }
                 else
                     do {
                         if (info)
-                            putval(n, "name", &col, out);
-                    } while (NEXT(in) != 0);
-                if (info && col) { putc('\n', out); col = 0; }
+                            putval(n, "name", &col, s.out);
+                    } while (NEXT(s.in) != 0);
+                if (info && col) { putc('\n', s.out); col = 0; }
             }
             if (ret & 16) {             /* comment field */
-                if (NEXT(in) == 0) {
+                if (NEXT(s.in) == 0) {
                     if (info)
-                        fputs("comment '\n", out);
+                        fputs("comment '\n", s.out);
                 }
                 else
                     do {
                         if (info)
-                            putval(n, "comment", &col, out);
-                    } while (NEXT(in) != 0);
-                if (info && col) { putc('\n', out); col = 0; }
+                            putval(n, "comment", &col, s.out);
+                    } while (NEXT(s.in) != 0);
+                if (info && col) { putc('\n', s.out); col = 0; }
             }
             if (ret & 2) {              /* header crc */
-                NEXT(in);
-                NEXT(in);
+                NEXT(s.in);
+                NEXT(s.in);
                 if (info)
-                    fputs("hcrc\n", out);
+                    fputs("hcrc\n", s.out);
             }
             trail = 8;
-            fputs("gzip\n", out);
+            if (wrap)
+                fputs("gzip\n", s.out);
         }
         else if (head && n != EOF && val % 31 == 0 && (ret & 0xf) == 8 &&
                  (ret >> 4) < 8) {
             /* zlib header */
-            fputs("!\n", out);
-            if ((val & 0xe0) != 0x80)       /* compression level */
-                fprintf(out, "level %d\n", (val >> 6) & 3);
-            if (val & 0x20) {               /* preset dictionary */
-                num = NEXT(in);
-                num = (num << 8) + NEXT(in);
-                num = (num << 8) + NEXT(in);
-                num = (num << 8) + NEXT(in);
-                fprintf(out, "dict %lu\n", num);
+            if (wrap)
+                fputs("!\n", s.out);
+            if (info && (val & 0xe0) != 0x80)   /* compression level */
+                fprintf(s.out, "level %d\n", (val >> 6) & 3);
+            if (val & 0x20) {                   /* preset dictionary */
+                num = NEXT(s.in);
+                num = (num << 8) + NEXT(s.in);
+                num = (num << 8) + NEXT(s.in);
+                num = (num << 8) + NEXT(s.in);
+                if (info)
+                    fprintf(s.out, "dict %lu\n", num);
             }
             ret = (ret >> 4) + 8;
             win = 1U << ret;        /* window size */
             trail = 4;
-            if (ret != 15)
-                fprintf(out, "zlib %d\n", ret);
-            else
-                fputs("zlib\n", out);
+            if (info && ret != 15)
+                fprintf(s.out, "zlib %d\n", ret);
+            else if (wrap)
+                fputs("zlib\n", s.out);
         }
         else {
             /* raw deflate data, put non-header bytes back (assumes two ok) */
-            ungetc(n, in);
-            ret = ungetc(ret, in);  /* this should work, but ... */
-            if (ret == EOF)         /* only one ungetc() guaranteed */
-                bail("could not ungetc() (!)");
+            ungetc(n, s.in);
+            ret = ungetc(ret, s.in);    /* this should work, but ... */
+            if (ret == EOF)             /* only one ungetc() guaranteed */
+                bail("could not ungetc() a second time (!)");
             trail = 0;
         }
 
         /* process compressed data to produce a defgen description */
-        ret = infgen(in, out, win, data, tree, draw, stats);
-        fflush(stdout);
+        ret = infgen(&s);
 
         /* check return value and trailer size */
         if (ret > 0)
-            fputs("infgen warning: incomplete deflate data\n", stderr);
+            warn("incomplete deflate data");
         else if (ret < 0)
-            fprintf(stderr, "infgen warning: invalid deflate data -- %s\n",
-                    -ret > 0 && -ret <= 10 ? inferr[-1 - ret] : "unknown");
+            warn("invalid deflate data -- %s",
+                 -ret > 0 && -ret <= 10 ? inferr[-1 - ret] : "unknown");
         else {
             n = 0;
-            while (n < trail && getc(in) != EOF)
+            while (n < trail && getc(s.in) != EOF)
                 n++;
             if (n < trail) {
-                fprintf(stderr, "infgen warning: incomplete %s trailer\n",
-                        trail == 4 ? "zlib" : "gzip");
+                warn("incomplete %s trailer", trail == 4 ? "zlib" : "gzip");
                 ret = 2;
             }
         }
 
-        /* write defgen trailer (note: trailer was not validated) */
-        if (ret == 0) {
+        /* write defgen trailer (note: trailer is not validated) */
+        if (ret == 0 && wrap) {
             if (trail == 4)
-                fputs("!\nadler\n", out);
+                fputs("!\nadler\n", s.out);
             else if (trail == 8)
-                fputs("!\ncrc\nlength\n", out);
+                fputs("!\ncrc\nlength\n", s.out);
         }
     } while (ret == 0);
 
     /* done */
+    fclose(s.out);
+    fclose(s.in);
+    if (errno)
+        bail("i/o error: %s", strerror(errno));
     return ret;
 }
