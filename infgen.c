@@ -1,7 +1,7 @@
 /*
  * infgen.c
- * Copyright (C) 2005-2013 Mark Adler, all rights reserved.
- * Version 2.2  10 Feb 2013
+ * Copyright (C) 2005-2015 Mark Adler, all rights reserved.
+ * Version 2.3  18 Jul 2015
  *
  * Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
  * simple binary encoded stream representing that input to stdout.  This is
@@ -347,7 +347,13 @@
                      Change options -n to -q, and -q to -qq
                      Build struct state in main()
                      Add local time description as a comment in time directive
+   2.3  18 Jul 2015  Distinguish incomplete from oversubscribed codes
+                     Use symbols for error codes
+                     Move all if statement actions to next line
+                     Show version in help
  */
+
+#define IG_VERSION "2.3"
 
 #include <stdio.h>          /* putc(), getc(), ungetc(), fputs(), fflush(),
                                fopen(), fclose(), fprintf(), vfprintf(),
@@ -370,6 +376,61 @@
 #endif
 
 #define local static
+
+/*
+ * infgen() return codes:
+ *
+ *   1:  available deflate data did not terminate
+ *   0:  successful inflate
+ *  -1:  invalid block type (type == 3)
+ *  -2:  stored block length did not match one's complement
+ *  -3:  dynamic block code description: too many length or distance codes
+ *  -4:  dynamic block code description: code lengths codes oversubscribed
+ *  -5:  dynamic block code description: code lengths codes incomplete
+ *  -6:  dynamic block code description: repeat lengths with no first length
+ *  -7:  dynamic block code description: repeat more than specified lengths
+ *  -8:  dynamic block code description: literal/length code oversubscribed
+ *  -9:  dynamic block code description: literal/length code incomplete
+ * -10:  dynamic block code description: distance code oversubscribed
+ * -11:  dynamic block code description: distance code incomplete
+ * -12:  dynamic block code description: missing end-of-block code
+ * -13:  invalid literal/length or distance code in fixed or dynamic block
+ */
+
+/* infgen() return code symbols */
+#define IG_INCOMPLETE 1
+#define IG_OK 0
+#define IG_BLOCK_TYPE_ERR -1
+#define IG_STORED_LENGTH_ERR -2
+#define IG_TOO_MANY_CODES_ERR -3
+#define IG_CODE_LENGTHS_CODE_OVER_ERR -4
+#define IG_CODE_LENGTHS_CODE_UNDER_ERR -5
+#define IG_REPEAT_NO_FIRST_ERR -6
+#define IG_REPEAT_TOO_MANY_ERR -7
+#define IG_LITLEN_CODE_OVER_ERR -8
+#define IG_LITLEN_CODE_UNDER_ERR -9
+#define IG_DIST_CODE_OVER_ERR -10
+#define IG_DIST_CODE_UNDER_ERR -11
+#define IG_NO_END_CODE_ERR -12
+#define IG_BAD_CODE_ERR -13
+
+/* infgen() negative return code messages */
+local const char *inferr[] = {
+    /*  -1 */ "invalid block type (3)",
+    /*  -2 */ "stored block length complement mismatch",
+    /*  -3 */ "too many length or distance codes",
+    /*  -4 */ "code lengths code is oversubscribed",
+    /*  -5 */ "code lengths code is incomplete",
+    /*  -6 */ "length repeat with no first length",
+    /*  -7 */ "repeat more lengths than available",
+    /*  -8 */ "literal/length code is oversubscribed",
+    /*  -9 */ "literal/length code is incomplete",
+    /* -10 */ "distance code is oversubscribed",
+    /* -11 */ "distance code is incomplete",
+    /* -12 */ "missing end-of-block code",
+    /* -13 */ "invalid code"
+};
+#define IG_ERRS (sizeof(inferr)/sizeof(char *))
 
 /*
  * Print an error message and exit.  Return a value to use in an expression,
@@ -508,7 +569,8 @@ local inline int bits(struct state *s, int need)
     val = s->bitbuf;
     while (s->bitcnt < need) {
         next = getc(s->in);
-        if (next == EOF) longjmp(s->env, 1);    /* out of input */
+        if (next == EOF)
+            longjmp(s->env, 1);                 /* out of input */
         val |= (long)(next) << s->bitcnt;       /* load eight bits */
         s->bitcnt += 8;
     }
@@ -557,12 +619,17 @@ local int stored(struct state *s)
     len += (unsigned)(getc(s->in)) << 8;
     cmp = getc(s->in);
     octet = getc(s->in);
-    if (octet == EOF) return 1;                 /* not enough input */
+    if (octet == EOF)
+        return IG_INCOMPLETE;                   /* not enough input */
     cmp += (unsigned)octet << 8;
-    if (len != (~cmp & 0xffff)) return -2;      /* didn't match complement! */
+    if (len != (~cmp & 0xffff))
+        return IG_STORED_LENGTH_ERR;            /* didn't match complement! */
     s->blockin += 32;
     if (s->stats) {
-        if (s->col) { putc('\n', s->out); s->col = 0; }
+        if (s->col) {
+            putc('\n', s->out);
+            s->col = 0;
+        }
         fprintf(s->out, "! stats stored length %u\n", len);
     }
 
@@ -578,7 +645,8 @@ local int stored(struct state *s)
     while (len--) {
         octet = getc(s->in);
         s->blockin += 8;
-        if (octet == EOF) return 1;             /* not enough input */
+        if (octet == EOF)
+            return IG_INCOMPLETE;               /* not enough input */
         if (s->binary) {
             if (octet < 0x7f)
                 putc(octet + 0x80, s->out);
@@ -595,12 +663,15 @@ local int stored(struct state *s)
 
     /* done with a valid stored block */
     if (s->data) {
-        if (s->col) { putc('\n', s->out); s->col = 0; }
+        if (s->col) {
+            putc('\n', s->out);
+            s->col = 0;
+        }
         fputs("end\n", s->out);
     }
     if (s->stats)
         end(s);
-    return 0;
+    return IG_OK;
 }
 
 /*
@@ -619,7 +690,7 @@ struct huffman {
  * Decode a code from the stream s using huffman table h.  Return the symbol or
  * a negative value if there is an error.  If all of the lengths are zero, i.e.
  * an empty code, or if the code is incomplete and an invalid code is received,
- * then -10 is returned after reading MAXBITS bits.
+ * then IG_BAD_CODE_ERR is returned after reading MAXBITS bits.
  */
 local inline int decode(struct state *s, struct huffman *h)
 {
@@ -655,12 +726,15 @@ local inline int decode(struct state *s, struct huffman *h)
             len++;
         }
         left = (MAXBITS+1) - len;
-        if (left == 0) break;
+        if (left == 0)
+            break;
         bitbuf = getc(s->in);
-        if (bitbuf == EOF) longjmp(s->env, 1);          /* out of input */
-        if (left > 8) left = 8;
+        if (bitbuf == EOF)
+            longjmp(s->env, 1);         /* out of input */
+        if (left > 8)
+            left = 8;
     }
-    return -10;                         /* ran out of codes */
+    return IG_BAD_CODE_ERR;             /* ran out of codes */
 }
 
 /*
@@ -706,7 +780,8 @@ local int construct(struct huffman *h, short *length, int n)
     for (len = 1; len <= MAXBITS; len++) {
         left <<= 1;                     /* one more bit, double codes left */
         left -= h->count[len];          /* deduct count from possible codes */
-        if (left < 0) return left;      /* over-subscribed--return negative */
+        if (left < 0)
+            return left;                /* over-subscribed--return negative */
     }                                   /* left > 0 means incomplete */
 
     /* generate offsets into symbol table for each length for sorting */
@@ -757,7 +832,8 @@ local int codes(struct state *s,
         beg = s->blockin;
         symbol = decode(s, lencode);
         s->symbols++;
-        if (symbol < 0) return symbol;  /* invalid symbol */
+        if (symbol < 0)
+            return symbol;              /* invalid symbol */
         if (symbol < 256) {             /* literal: symbol is the byte */
             /* write out the literal */
             if (s->binary) {
@@ -777,13 +853,15 @@ local int codes(struct state *s,
         }
         else if (symbol > 256) {        /* length */
             /* get and compute length */
+            if (symbol >= MAXLCODES)
+                return IG_BAD_CODE_ERR;         /* invalid fixed code */
             symbol -= 257;
-            if (symbol >= 29) return -10;       /* invalid fixed code */
             len = lens[symbol] + bits(s, lext[symbol]);
 
             /* get distance */
             symbol = decode(s, distcode);
-            if (symbol < 0) return symbol;      /* invalid symbol */
+            if (symbol < 0)
+                return symbol;                  /* invalid symbol */
             dist = dists[symbol] + bits(s, dext[symbol]);
 
             /* check distance and write match */
@@ -793,7 +871,10 @@ local int codes(struct state *s,
                 putc(len - 3, s->out);
             }
             if (s->data) {
-                if (s->col) { putc('\n', s->out); s->col = 0; }
+                if (s->col) {
+                    putc('\n', s->out);
+                    s->col = 0;
+                }
                 fprintf(s->out, "match %d %u\n", len, dist);
             }
             if (dist > s->max) {
@@ -822,7 +903,10 @@ local int codes(struct state *s,
 
     /* write end of block code */
     if (s->data) {
-        if (s->col) { putc('\n', s->out); s->col = 0; }
+        if (s->col) {
+            putc('\n', s->out);
+            s->col = 0;
+        }
         fputs("end\n", s->out);
     }
     if (s->stats) {
@@ -847,7 +931,7 @@ local int codes(struct state *s,
     }
 
     /* done with a valid fixed or dynamic block */
-    return 0;
+    return IG_OK;
 }
 
 /*
@@ -907,12 +991,15 @@ local int dynamic(struct state *s)
         {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
 
     /* get number of lengths in each table, check lengths */
-    if (s->data && s->col) { putc('\n', s->out); s->col = 0; }
+    if (s->data && s->col) {
+        putc('\n', s->out);
+        s->col = 0;
+    }
     nlen = bits(s, 5) + 257;
     ndist = bits(s, 5) + 1;
     ncode = bits(s, 4) + 4;
     if (nlen > MAXLCODES || ndist > MAXDCODES)
-        return -3;                      /* bad counts */
+        return IG_TOO_MANY_CODES_ERR;       /* bad counts */
     if (s->binary) {
         putc(nlen - 256, s->out);
         putc(ndist, s->out);
@@ -938,7 +1025,10 @@ local int dynamic(struct state *s)
 
     /* build huffman table for code lengths codes (use lencode temporarily) */
     err = construct(&lencode, lengths, 19);
-    if (err != 0) return -4;            /* require complete code set here */
+    if (err < 0)
+        return IG_CODE_LENGTHS_CODE_OVER_ERR;   /* oversubscribed */
+    else if (err > 0)
+        return IG_CODE_LENGTHS_CODE_UNDER_ERR;  /* incomplete */
 
     /* read length/literal and distance code length tables */
     index = 0;
@@ -947,7 +1037,8 @@ local int dynamic(struct state *s)
         int len;                /* last length to repeat */
 
         symbol = decode(s, &lencode);
-        if (symbol < 0) return symbol;  /* invalid symbol */
+        if (symbol < 0)
+            return symbol;              /* invalid symbol */
         if (symbol < 16) {              /* length in 0..15 */
             if (s->binary)
                 putc(symbol + 1, s->out);
@@ -958,8 +1049,9 @@ local int dynamic(struct state *s)
         else {                          /* repeat instruction */
             len = -1;                   /* assume repeating zeros */
             if (symbol == 16) {         /* repeat last length 3..6 times */
-                if (index == 0) return -5;      /* no last length! */
-                len = lengths[index - 1];       /* last length */
+                if (index == 0)
+                    return IG_REPEAT_NO_FIRST_ERR;  /* no last length! */
+                len = lengths[index - 1];           /* last length */
                 symbol = 3 + bits(s, 2);
             }
             else if (symbol == 17)      /* repeat zero 3..10 times */
@@ -967,11 +1059,14 @@ local int dynamic(struct state *s)
             else                        /* == 18, repeat zero 11..138 times */
                 symbol = 11 + bits(s, 7);
             if (index + symbol > nlen + ndist)
-                return -6;              /* too many lengths! */
+                return IG_REPEAT_TOO_MANY_ERR;  /* too many lengths! */
             if (s->binary)
                 putc(symbol + (len == -1 ? 14 : 18), s->out);
             if (s->draw) {
-                if (s->col) { putc('\n', s->out); s->col = 0; }
+                if (s->col) {
+                    putc('\n', s->out);
+                    s->col = 0;
+                }
                 fprintf(s->out, "%s %d\n", len == -1 ? "zeros" : "repeat",
                         symbol);
             }
@@ -983,7 +1078,10 @@ local int dynamic(struct state *s)
     }
     if (s->binary)
         putc(0, s->out);
-    if (s->draw && s->col) { putc('\n', s->out); s->col = 0; }
+    if (s->draw && s->col) {
+        putc('\n', s->out);
+        s->col = 0;
+    }
     if (s->stats)
         fprintf(s->out, "! stats table %" PRIuMAX ":%" PRIuMAX "\n",
                 (s->blockin - 3) >> 3, (s->blockin - 3) & 7);
@@ -1002,43 +1100,34 @@ local int dynamic(struct state *s)
 
     /* check for end-of-block code -- there better be one! */
     if (lengths[256] == 0)
-        return -9;
+        return IG_NO_END_CODE_ERR;
 
     /* build huffman table for literal/length codes */
     err = construct(&lencode, lengths, nlen);
-    if (err < 0 || (err > 0 && nlen - lencode.count[0] != 1))
-        return -7;      /* only allow incomplete codes if just one code */
+    if (err < 0)
+        return IG_LITLEN_CODE_OVER_ERR;
+    else if (err > 0 && nlen - lencode.count[0] != 1)
+        return IG_LITLEN_CODE_UNDER_ERR;    /* incomplete with one code ok */
 
     /* build huffman table for distance codes */
     err = construct(&distcode, lengths + nlen, ndist);
-    if (err < 0 || (err > 0 && ndist - distcode.count[0] != 1))
-        return -8;      /* only allow incomplete codes if just one code */
+    if (err < 0)
+        return IG_DIST_CODE_OVER_ERR;
+    else if (err > 0 && ndist - distcode.count[0] != 1)
+        return IG_DIST_CODE_UNDER_ERR;      /* incomplete with one code ok */
 
     /* decode data until end-of-block code */
     return codes(s, &lencode, &distcode);
 }
 
 /*
- * Inflate in to out, writing a defgen description of the input stream.
- * On success, the return value of infgen() is zero.  If there is an error in
+ * Inflate in to out, writing a defgen description of the input stream.  On
+ * success, the return value of infgen() is IG_OK (0).  If there is an error in
  * the source data, i.e. it is not in the deflate format, then a negative value
- * is returned.  If there is not enough input available, then a positive error
- * is returned.
+ * is returned.  If there is not enough input available, then IG_INCOMPLETE is
+ * returned.
  *
- * The return codes are:
- *
- *   1:  available deflate data did not terminate
- *   0:  successful inflate
- *  -1:  invalid block type (type == 3)
- *  -2:  stored block length did not match one's complement
- *  -3:  dynamic block code description: too many length or distance codes
- *  -4:  dynamic block code description: code lengths codes incomplete
- *  -5:  dynamic block code description: repeat lengths with no first length
- *  -6:  dynamic block code description: repeat more than specified lengths
- *  -7:  dynamic block code description: invalid literal/length code lengths
- *  -8:  dynamic block code description: invalid distance code lengths
- *  -9:  dynamic block code description: missing end-of-block code
- * -10:  invalid literal/length or distance code in fixed or dynamic block
+ * infgen()'s return codes are documented near the top of this source file.
  */
 local int infgen(struct state *s)
 {
@@ -1064,7 +1153,7 @@ local int infgen(struct state *s)
 
     /* return if bits() or decode() tries to read past available input */
     if (setjmp(s->env) != 0)            /* if came back here via longjmp() */
-        err = 1;                        /* then skip do-loop, return error */
+        err = IG_INCOMPLETE;            /* then skip do-loop, return error */
     else {
         /* process blocks until last block or error */
         do {
@@ -1107,17 +1196,19 @@ local int infgen(struct state *s)
                     fputs("dynamic\n", s->out);
                 err = dynamic(s);
                 break;
-            default:
+            default:    /* 3 */
                 if (s->data)
                     fputs("block3\nend\n", s->out);
-                err = -1;
+                err = IG_BLOCK_TYPE_ERR;
             }
-            if (err != 0) break;        /* return with error */
+            if (err != IG_OK)
+                break;                  /* return with error */
         } while (!last);
     }
 
     /* finish off dangling literal line */
-    if (s->data && s->col) putc('\n', s->out);
+    if (s->data && s->col)
+        putc('\n', s->out);
 
     /* write the leftovers information */
     if (s->binary) {
@@ -1152,25 +1243,12 @@ local int infgen(struct state *s)
     return err;
 }
 
-/* infgen() negative return code messages */
-local char *inferr[] = {
-    "invalid block type (3)",
-    "stored block length complement mismatch",
-    "too many length or distance codes",
-    "code lengths code is incomplete",
-    "length repeat with no first length",
-    "repeat more lengths than available",
-    "invalid literal/length code set",
-    "invalid distance code set",
-    "missing end-of-block code",
-    "invalid code"
-};
-
 /* provide help for command options */
 local void help(void)
 {
     fputs(
           "\n"
+          "infgen " IG_VERSION "\n"
           "Usage:\n"
           "\n"
           "  infgen [-dq[q]isrb] input_path > output_path\n"
@@ -1284,9 +1362,11 @@ int main(int argc, char **argv)
             /* gzip header */
             if (wrap)
                 fputs("!\n", s.out);
-            if (NEXT(s.in) != 8) bail("unknown gzip compression method %d", n);
+            if (NEXT(s.in) != 8)
+                bail("unknown gzip compression method %d", n);
             ret = NEXT(s.in);
-            if (ret & 0xe0) bail("reserved gzip flags set (%02x)", ret);
+            if (ret & 0xe0)
+                bail("reserved gzip flags set (%02x)", ret);
             if (info && (ret & 1))
                 fputs("text\n", s.out);
             num = NEXT(s.in);
@@ -1315,7 +1395,10 @@ int main(int argc, char **argv)
                         if (info)
                             putval(NEXT(s.in), "extra", &col, s.out);
                     } while (--val);
-                if (info && col) { putc('\n', s.out); col = 0; }
+                if (info && col) {
+                    putc('\n', s.out);
+                    col = 0;
+                }
             }
             if (ret & 8) {              /* file name */
                 if (NEXT(s.in) == 0) {
@@ -1327,7 +1410,10 @@ int main(int argc, char **argv)
                         if (info)
                             putval(n, "name", &col, s.out);
                     } while (NEXT(s.in) != 0);
-                if (info && col) { putc('\n', s.out); col = 0; }
+                if (info && col) {
+                    putc('\n', s.out);
+                    col = 0;
+                }
             }
             if (ret & 16) {             /* comment field */
                 if (NEXT(s.in) == 0) {
@@ -1339,7 +1425,10 @@ int main(int argc, char **argv)
                         if (info)
                             putval(n, "comment", &col, s.out);
                     } while (NEXT(s.in) != 0);
-                if (info && col) { putc('\n', s.out); col = 0; }
+                if (info && col) {
+                    putc('\n', s.out);
+                    col = 0;
+                }
             }
             if (ret & 2) {              /* header crc */
                 NEXT(s.in);
@@ -1391,7 +1480,8 @@ int main(int argc, char **argv)
             warn("incomplete deflate data");
         else if (ret < 0)
             warn("invalid deflate data -- %s",
-                 -ret > 0 && -ret <= 10 ? inferr[-1 - ret] : "unknown");
+                 -ret > 0 && -ret <= (int)IG_ERRS ?
+                    inferr[-1 - ret] : "unknown");
         else {
             n = 0;
             while (n < trail && getc(s.in) != EOF)
