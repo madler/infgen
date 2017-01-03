@@ -351,7 +351,7 @@
                      Use symbols for error codes
                      Move all if statement actions to next line
                      Show version in help
-   2.4   2 Jan 2017  
+   2.4   2 Jan 2017  Fix erroneous declaration of i/o error on devices
  */
 
 #define IG_VERSION "2.4"
@@ -1505,7 +1505,7 @@ int main(int argc, char **argv)
     /* done */
     fclose(s.out);
     fclose(s.in);
-    if (errno)
+    if ((ferror(s.in) || ferror(s.out)) && errno)
         bail("i/o error: %s", strerror(errno));
     return ret;
 }
