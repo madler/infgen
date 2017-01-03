@@ -1,7 +1,7 @@
 /*
  * infgen.c
- * Copyright (C) 2005-2015 Mark Adler, all rights reserved.
- * Version 2.3  18 Jul 2015
+ * Copyright (C) 2005-2017 Mark Adler, all rights reserved.
+ * Version 2.4  2 Jan 2017
  *
  * Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
  * simple binary encoded stream representing that input to stdout.  This is
@@ -185,7 +185,7 @@
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output.  E.g. "! infgen 2.2 output".
+    generated the defgen format output.  E.g. "! infgen 2.4 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
@@ -351,9 +351,10 @@
                      Use symbols for error codes
                      Move all if statement actions to next line
                      Show version in help
+   2.4   2 Jan 2017  
  */
 
-#define IG_VERSION "2.3"
+#define IG_VERSION "2.4"
 
 #include <stdio.h>          /* putc(), getc(), ungetc(), fputs(), fflush(),
                                fopen(), fclose(), fprintf(), vfprintf(),
@@ -1345,7 +1346,7 @@ int main(int argc, char **argv)
 
     /* say what wrote this */
     if (wrap)
-        fputs("! infgen 2.2 output\n", s.out);
+        fputs("! infgen 2.4 output\n", s.out);
 
     /* process concatenated streams */
     do {
