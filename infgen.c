@@ -1,39 +1,38 @@
 /*
- * infgen.c
- * Copyright (C) 2005-2017 Mark Adler, all rights reserved.
- * Version 2.4  2 Jan 2017
- *
- * Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
- * simple binary encoded stream representing that input to stdout.  This is
- * based on the puff.c code to decompress deflate streams.  Note that neither
- * the zlib nor the gzip trailer is checked against the uncompressed data (in
- * fact the uncompressed data is never generated) -- only the fact that the
- * trailer is present is checked.
- *
- * Usage: infgen [-d] [-q[q]] [-i] [-s] [-r] [-b] < foo.gz > foo.def
- *    or: infgen [-d] [-q[q]] [-i] [-s] [-r] [-b] foo.gz > foo.def
- *
- * where foo.gz is a gzip file (it could have been a zlib or raw deflate stream
- * as well), and foo.def is a defgen description of the file or stream, which
- * is in a readable text format (unless -b is used).  The description includes
- * the literal/length and distance code lengths for dynamic blocks.  The -d
- * (dynamic) option generates directives to exactly reconstruct the dynamic
- * block headers.  With -d, the code lengths are still included, but now as
- * comments instead of directives.  The -q (quiet) option supresses the dynamic
- * block code lengths, whether as directives or as comments.  The -qq (really
- * quiet) option supresses the output of all deflate stream descriptions,
- * leaving only the header and trailer information.  However if -qq is used
- * with -s, the statistics information on the deflate stream is still included.
- * The -i (info) option generates additional directives for gzip or zlib
- * headers that permit their exact reconstruction.  The -s (statistics) option
- * writes out comments with statistics for each deflate block and totals at the
- * end.  The -r (raw) option forces the interpretation of the input as a raw
- * deflate stream, for those cases where the start of a raw stream happens to
- * mimic a valid zlib header.  The -b (binary) option writes a compact binary
- * format instead of the defgen format.  In that case, any other options except
- * -r are ignored.
- *
- * Both the defgen and compact binary formats are described below.
+ infgen.c
+ Copyright (C) 2005-2017 Mark Adler, all rights reserved.
+ Version 2.4  2 Jan 2017
+
+ Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
+ simple binary encoded stream representing that input to stdout.  This is based
+ on the puff.c code to decompress deflate streams.  Note that neither the zlib
+ nor the gzip trailer is checked against the uncompressed data (in fact the
+ uncompressed data is never generated) -- only the fact that the trailer is
+ present is checked.
+
+ Usage: infgen [-d] [-q[q]] [-i] [-s] [-r] [-b] < foo.gz > foo.def
+    or: infgen [-d] [-q[q]] [-i] [-s] [-r] [-b] foo.gz > foo.def
+
+ where foo.gz is a gzip file (it could have been a zlib or raw deflate stream
+ as well), and foo.def is a defgen description of the file or stream, which is
+ in a readable text format (unless -b is used).  The description includes the
+ literal/length and distance code lengths for dynamic blocks.  The -d (dynamic)
+ option generates directives to exactly reconstruct the dynamic block headers.
+ With -d, the code lengths are still included, but now as comments instead of
+ directives.  The -q (quiet) option supresses the dynamic block code lengths,
+ whether as directives or as comments.  The -qq (really quiet) option supresses
+ the output of all deflate stream descriptions, leaving only the header and
+ trailer information.  However if -qq is used with -s, the statistics
+ information on the deflate stream is still included. The -i (info) option
+ generates additional directives for gzip or zlib headers that permit their
+ exact reconstruction.  The -s (statistics) option writes out comments with
+ statistics for each deflate block and totals at the end.  The -r (raw) option
+ forces the interpretation of the input as a raw deflate stream, for those
+ cases where the start of a raw stream happens to mimic a valid zlib header.
+ The -b (binary) option writes a compact binary format instead of the defgen
+ format.  In that case, any other options except -r are ignored.
+
+ Both the defgen and compact binary formats are described below.
  */
 
 /*
@@ -356,17 +355,17 @@
 
 #define IG_VERSION "2.4"
 
-#include <stdio.h>          /* putc(), getc(), ungetc(), fputs(), fflush(),
-                               fopen(), fclose(), fprintf(), vfprintf(),
-                               stdout, stderr, FILE, EOF */
-#include <stdlib.h>         /* exit() */
-#include <string.h>         /* strerror() */
-#include <errno.h>          /* errno */
-#include <time.h>           /* time_t, gmtime(), asctime() */
-#include <stdarg.h>         /* va_list, va_start(), va_end() */
-#include <inttypes.h>       /* intmax_t, PRIuMAX */
-#include <setjmp.h>         /* jmp_buf, setjmp(), longjmp() */
-#include <unistd.h>         /* isatty() */
+#include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
+                            // fopen(), fclose(), fprintf(), vfprintf(),
+                            // stdout, stderr, FILE, EOF
+#include <stdlib.h>         // exit()
+#include <string.h>         // strerror()
+#include <errno.h>          // errno
+#include <time.h>           // time_t, gmtime(), asctime()
+#include <stdarg.h>         // va_list, va_start(), va_end()
+#include <inttypes.h>       // intmax_t, PRIuMAX
+#include <setjmp.h>         // jmp_buf, setjmp(), longjmp()
+#include <unistd.h>         // isatty()
 
 #if defined(MSDOS) || defined(OS2) || defined(_WIN32) || defined(__CYGWIN__)
 #  include <fcntl.h>
@@ -398,7 +397,7 @@
  * -13:  invalid literal/length or distance code in fixed or dynamic block
  */
 
-/* infgen() return code symbols */
+// infgen() return code symbols.
 #define IG_INCOMPLETE 1
 #define IG_OK 0
 #define IG_BLOCK_TYPE_ERR -1
@@ -415,7 +414,7 @@
 #define IG_NO_END_CODE_ERR -12
 #define IG_BAD_CODE_ERR -13
 
-/* infgen() negative return code messages */
+// infgen() negative return code messages.
 local const char *inferr[] = {
     /*  -1 */ "invalid block type (3)",
     /*  -2 */ "stored block length complement mismatch",
@@ -433,16 +432,12 @@ local const char *inferr[] = {
 };
 #define IG_ERRS (sizeof(inferr)/sizeof(char *))
 
-/*
- * Print an error message and exit.  Return a value to use in an expression,
- * even though the function will never return.
- */
-local inline int bail(char *fmt, ...)
-{
-    va_list ap;
-
+// Print an error message and exit.  Return a value to use in an expression,
+// even though the function will never return.
+local inline int bail(char *fmt, ...) {
     fflush(stdout);
     fputs("infgen error: ", stderr);
+    va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
@@ -451,81 +446,72 @@ local inline int bail(char *fmt, ...)
     return 0;
 }
 
-/*
- * Print a warning to stderr.
- */
-local inline void warn(char *fmt, ...)
-{
-    va_list ap;
-
+// Print a warning to stderr.
+local inline void warn(char *fmt, ...) {
     fflush(stdout);
     fputs("infgen warning: ", stderr);
+    va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
     putc('\n', stderr);
 }
 
-/*
- * Maximums for allocations and loops.  It is not useful to change these --
- * they are fixed by the deflate format.
- */
-#define MAXBITS 15              /* maximum bits in a code */
-#define MAXLCODES 286           /* maximum number of literal/length codes */
-#define MAXDCODES 30            /* maximum number of distance codes */
-#define MAXCODES (MAXLCODES+MAXDCODES)  /* maximum codes lengths to read */
-#define FIXLCODES 288           /* number of fixed literal/length codes */
-#define MAXDIST 32768           /* maximum match distance */
+// Maximums for allocations and loops.  It is not useful to change these --
+// they are fixed by the deflate format.
+#define MAXBITS 15              // maximum bits in a code
+#define MAXLCODES 286           // maximum number of literal/length codes
+#define MAXDCODES 30            // maximum number of distance codes
+#define MAXCODES (MAXLCODES+MAXDCODES)  // maximum codes lengths to read
+#define FIXLCODES 288           // number of fixed literal/length codes
+#define MAXDIST 32768           // maximum match distance
 
-/* infgen() input and output state */
+// infgen() input and output state.
 struct state {
-    /* output state */
-    int binary;                 /* true to write compact binary format */
-    int data;                   /* true to output literals and matches */
-    int tree;                   /* true to output dynamic tree */
-    int draw;                   /* true to output dynamic descriptor */
-    int stats;                  /* true to output statistics */
-    int col;                    /* state within data line */
-    unsigned max;               /* maximum distance (bytes so far) */
-    unsigned win;               /* window size from zlib header or 32K */
-    FILE *out;                  /* output file */
+    // Output state.
+    int binary;                 // true to write compact binary format
+    int data;                   // true to output literals and matches
+    int tree;                   // true to output dynamic tree
+    int draw;                   // true to output dynamic descriptor
+    int stats;                  // true to output statistics
+    int col;                    // state within data line
+    unsigned max;               // maximum distance (bytes so far)
+    unsigned win;               // window size from zlib header or 32K
+    FILE *out;                  // output file
 
-    /* input state */
-    int bitcnt;                 /* number of bits in bit buffer */
-    int bitbuf;                 /* bit buffer */
-    FILE *in;                   /* input file */
+    // Input state.
+    int bitcnt;                 // number of bits in bit buffer
+    int bitbuf;                 // bit buffer
+    FILE *in;                   // input file
 
-    /* current block statistics */
-    unsigned reach;             /* maximum distance before current block */
-    uintmax_t blockin;          /* bits in for current block */
-    uintmax_t blockout;         /* bytes out for current block */
-    uintmax_t symbols;          /* number of symbols (or stored bytes) */
-    uintmax_t matches;          /* number of matches */
-    uintmax_t matchlen;         /* total length of matches */
-    uintmax_t litbits;          /* number of bits in literals */
+    // Current block statistics.
+    unsigned reach;             // maximum distance before current block
+    uintmax_t blockin;          // bits in for current block
+    uintmax_t blockout;         // bytes out for current block
+    uintmax_t symbols;          // number of symbols (or stored bytes)
+    uintmax_t matches;          // number of matches
+    uintmax_t matchlen;         // total length of matches
+    uintmax_t litbits;          // number of bits in literals
 
-    /* total statistics */
-    uintmax_t blocks;           /* total number of deflate blocks */
-    uintmax_t inbits;           /* total deflate bits in */
-    uintmax_t outbytes;         /* total uncompressed bytes out */
-    uintmax_t symbnum;          /* total number of symbols */
-    uintmax_t matchnum;         /* total number of matches */
-    uintmax_t matchtot;         /* total length of matches */
-    uintmax_t littot;           /* total bits in literals */
+    // Total statistics.
+    uintmax_t blocks;           // total number of deflate blocks
+    uintmax_t inbits;           // total deflate bits in
+    uintmax_t outbytes;         // total uncompressed bytes out
+    uintmax_t symbnum;          // total number of symbols
+    uintmax_t matchnum;         // total number of matches
+    uintmax_t matchtot;         // total length of matches
+    uintmax_t littot;           // total bits in literals
 
-    /* input limit error return state for bits() and decode() */
+    // Input limit error return state for bits() and decode().
     jmp_buf env;
 };
 
-#define LINELEN 79      /* target line length for data and literal commands */
+#define LINELEN 79      // target line length for data and literal commands
 
-/*
- * Write a byte in a literal or data defgen command, keeping the line length
- * reasonable and using string literals whenever possible.
- */
-local inline void putval(int val, char *command, int *col, FILE *out)
-{
-    /* new line if too long or decimal after string */
+// Write a byte in a literal or data defgen command, keeping the line length
+// reasonable and using string literals whenever possible.
+local inline void putval(int val, char *command, int *col, FILE *out) {
+    // New line if too long or decimal after string.
     if (*col == 0 || (*col < 0 ? -*col : *col) > LINELEN - 4 ||
         (*col < 0 && (val < 0x20 || val > 0x7e))) {
         if (*col)
@@ -533,63 +519,54 @@ local inline void putval(int val, char *command, int *col, FILE *out)
         *col = fputs(command, out);
     }
 
-    /* string literal (already range-checked above) */
+    // String literal (already range-checked above).
     if (*col < 0) {
         putc(val, out);
         (*col)--;
     }
 
-    /* new string literal (mark with negative lit) */
+    // New string literal (mark with negative lit).
     else if (val >= 0x20 && val <= 0x7e) {
         *col += fprintf(out, " '%c", val);
         *col = -*col;
     }
 
-    /* decimal literal */
+    // Decimal literal.
     else
         *col += fprintf(out, " %u", val);
 }
 
-/*
- * Return need bits from the input stream.  This always leaves less than
- * eight bits in the buffer.  bits() works properly for need == 0.
- *
- * Format notes:
- *
- * - Bits are stored in bytes from the least significant bit to the most
- *   significant bit.  Therefore bits are dropped from the bottom of the bit
- *   buffer, using shift right, and new bytes are appended to the top of the
- *   bit buffer, using shift left.
- */
-local inline int bits(struct state *s, int need)
-{
-    int next;           /* next byte from input */
-    long val;           /* bit accumulator (can use up to 20 bits) */
-
-    /* load at least need bits into val */
-    val = s->bitbuf;
+// Return need bits from the input stream.  This always leaves less than
+// eight bits in the buffer.  bits() works properly for need == 0.
+//
+// Format notes:
+//
+// - Bits are stored in bytes from the least significant bit to the most
+//   significant bit.  Therefore bits are dropped from the bottom of the bit
+//   buffer, using shift right, and new bytes are appended to the top of the
+//   bit buffer, using shift left.
+local inline int bits(struct state *s, int need) {
+    // Load at least need bits into val.
+    long val = s->bitbuf;
     while (s->bitcnt < need) {
-        next = getc(s->in);
+        int next = getc(s->in);
         if (next == EOF)
-            longjmp(s->env, 1);                 /* out of input */
-        val |= (long)(next) << s->bitcnt;       /* load eight bits */
+            longjmp(s->env, 1);                 // out of input
+        val |= (long)(next) << s->bitcnt;       // load eight bits
         s->bitcnt += 8;
     }
 
-    /* drop need bits and update buffer, always zero to seven bits left */
+    // Drop need bits and update buffer, always zero to seven bits left.
     s->bitbuf = (int)(val >> need);
     s->bitcnt -= need;
     s->blockin += need;
 
-    /* return need bits, zeroing the bits above that */
+    // Return need bits, zeroing the bits above that.
     return (int)(val & ((1L << need) - 1));
 }
 
-/*
- * Show and accumulate statistics at end of block.
- */
-local void end(struct state *s)
-{
+// Show and accumulate statistics at end of block.
+local void end(struct state *s) {
     if (s->stats)
         fprintf(s->out, "! stats inout %" PRIuMAX ":%" PRIuMAX
                         " (%" PRIuMAX ") %" PRIuMAX " %s%u\n",
@@ -601,30 +578,23 @@ local void end(struct state *s)
     s->symbnum += s->symbols;
 }
 
-/*
- * Process a stored block.
- */
-local int stored(struct state *s)
-{
-    unsigned len;       /* length of stored block */
-    unsigned cmp;       /* should be one's complement of len */
-    int octet;          /* byte to copy */
-
-    /* discard leftover bits from current byte (assumes s->bitcnt < 8) */
+// Process a stored block.
+local int stored(struct state *s) {
+    // Discard leftover bits from current byte (assumes s->bitcnt < 8).
     s->blockin += s->bitcnt;
     s->bitcnt = 0;
     s->bitbuf = 0;
 
-    /* get length and check against its one's complement */
-    len = getc(s->in);
+    // Get length and check against its one's complement.
+    unsigned len = getc(s->in);
     len += (unsigned)(getc(s->in)) << 8;
-    cmp = getc(s->in);
-    octet = getc(s->in);
+    unsigned cmp = getc(s->in);
+    int octet = getc(s->in);
     if (octet == EOF)
-        return IG_INCOMPLETE;                   /* not enough input */
+        return IG_INCOMPLETE;                   // not enough input
     cmp += (unsigned)octet << 8;
     if (len != (~cmp & 0xffff))
-        return IG_STORED_LENGTH_ERR;            /* didn't match complement! */
+        return IG_STORED_LENGTH_ERR;            // didn't match complement!
     s->blockin += 32;
     if (s->stats) {
         if (s->col) {
@@ -634,7 +604,7 @@ local int stored(struct state *s)
         fprintf(s->out, "! stats stored length %u\n", len);
     }
 
-    /* update max distance */
+    // Update max distance.
     if (s->max < s->win) {
         if (len > s->win - s->max)
             s->max = s->win;
@@ -642,12 +612,12 @@ local int stored(struct state *s)
             s->max += len;
     }
 
-    /* copy len bytes from in to out */
+    // Copy len bytes from in to out.
     while (len--) {
         octet = getc(s->in);
         s->blockin += 8;
         if (octet == EOF)
-            return IG_INCOMPLETE;               /* not enough input */
+            return IG_INCOMPLETE;               // not enough input
         if (s->binary) {
             if (octet < 0x7f)
                 putc(octet + 0x80, s->out);
@@ -662,7 +632,7 @@ local int stored(struct state *s)
         s->symbols++;
     }
 
-    /* done with a valid stored block */
+    // Done with a valid stored block.
     if (s->data) {
         if (s->col) {
             putc('\n', s->out);
@@ -675,168 +645,146 @@ local int stored(struct state *s)
     return IG_OK;
 }
 
-/*
- * Huffman code decoding tables.  count[1..MAXBITS] is the number of symbols of
- * each length, which for a canonical code are stepped through in order.
- * symbol[] are the symbol values in canonical order, where the number of
- * entries is the sum of the counts in count[].  The decoding process can be
- * seen in the function decode() below.
- */
+// Huffman code decoding tables.  count[1..MAXBITS] is the number of symbols of
+// each length, which for a canonical code are stepped through in order.
+// symbol[] are the symbol values in canonical order, where the number of
+// entries is the sum of the counts in count[].  The decoding process can be
+// seen in the function decode() below.
 struct huffman {
-    short *count;       /* number of symbols of each length */
-    short *symbol;      /* canonically ordered symbols */
+    short *count;       // number of symbols of each length
+    short *symbol;      // canonically ordered symbols
 };
 
-/*
- * Decode a code from the stream s using huffman table h.  Return the symbol or
- * a negative value if there is an error.  If all of the lengths are zero, i.e.
- * an empty code, or if the code is incomplete and an invalid code is received,
- * then IG_BAD_CODE_ERR is returned after reading MAXBITS bits.
- */
-local inline int decode(struct state *s, struct huffman *h)
-{
-    int len;            /* current number of bits in code */
-    int code;           /* len bits being decoded */
-    int first;          /* first code of length len */
-    int count;          /* number of codes of length len */
-    int index;          /* index of first code of length len in symbol table */
-    int bitbuf;         /* bits from stream */
-    int left;           /* bits left in next or left to process */
-    short *next;        /* next number of codes */
-
-    bitbuf = s->bitbuf;
-    left = s->bitcnt;
-    code = first = index = 0;
-    len = 1;
-    next = h->count + 1;
-    while (1) {
+// Decode a code from the stream s using huffman table h.  Return the symbol or
+// a negative value if there is an error.  If all of the lengths are zero, i.e.
+// an empty code, or if the code is incomplete and an invalid code is received,
+// then IG_BAD_CODE_ERR is returned after reading MAXBITS bits.
+local inline int decode(struct state *s, struct huffman *h) {
+    int bitbuf = s->bitbuf;     // bits to decode from the input
+    int left = s->bitcnt;       // number of bits in bitbuf
+    int len = 1;                // length of code in consideration
+    int code = 0;               // len bits pulled from bitbuf
+    int first = 0;              // first code of length len
+    int index = 0;              // index of that code in the symbol table
+    short *next = h->count + 1; // pointer to number of codes of next length
+    for (;;) {
         while (left--) {
             code |= bitbuf & 1;
             bitbuf >>= 1;
-            count = *next++;
-            if (code < first + count) { /* if length len, return symbol */
+            int count = *next++;
+            if (code < first + count) {
+                // This code is length len. Update state and return symbol.
                 s->bitbuf = bitbuf;
                 s->bitcnt = (s->bitcnt - len) & 7;
                 s->blockin += len;
                 return h->symbol[index + (code - first)];
             }
-            index += count;             /* else update for next length */
+
+            // Update to find a code of the next length.
+            index += count;
             first += count;
             first <<= 1;
             code <<= 1;
             len++;
         }
+
+        // Need to load more bits from the input into bitbuf.
         left = (MAXBITS+1) - len;
         if (left == 0)
             break;
         bitbuf = getc(s->in);
         if (bitbuf == EOF)
-            longjmp(s->env, 1);         /* out of input */
+            longjmp(s->env, 1);         // out of input
         if (left > 8)
             left = 8;
     }
-    return IG_BAD_CODE_ERR;             /* ran out of codes */
+    return IG_BAD_CODE_ERR;             // ran out of codes
 }
 
-/*
- * Given the list of code lengths length[0..n-1] representing a canonical
- * Huffman code for n symbols, construct the tables required to decode those
- * codes.  Those tables are the number of codes of each length, and the symbols
- * sorted by length, retaining their original order within each length.  The
- * return value is zero for a complete code set, negative for an over-
- * subscribed code set, and positive for an incomplete code set.  The tables
- * can be used if the return value is zero or positive, but they cannot be used
- * if the return value is negative.  If the return value is zero, it is not
- * possible for decode() using that table to return an error--any stream of
- * enough bits will resolve to a symbol.  If the return value is positive, then
- * it is possible for decode() using that table to return an error for received
- * codes past the end of the incomplete lengths.
- *
- * Not used by decode(), but used for error checking, h->count[0] is the number
- * of the n symbols not in the code.  So n - h->count[0] is the number of
- * codes.  This is useful for checking for incomplete codes that have more than
- * one symbol, which is an error in a dynamic block.
- *
- * Assumption: for all i in 0..n-1, 0 <= length[i] <= MAXBITS
- * This is assured by the construction of the length arrays in dynamic() and
- * fixed() and is not verified by construct().
- */
-local int construct(struct huffman *h, short *length, int n)
-{
-    int symbol;         /* current symbol when stepping through length[] */
-    int len;            /* current length when stepping through h->count[] */
-    int left;           /* number of possible codes left of current length */
-    short offs[MAXBITS+1];      /* offsets in symbol table for each length */
-
-    /* count number of codes of each length */
-    for (len = 0; len <= MAXBITS; len++)
+// Given the list of code lengths length[0..n-1] representing a canonical
+// Huffman code for n symbols, construct the tables required to decode those
+// codes.  Those tables are the number of codes of each length, and the symbols
+// sorted by length, retaining their original order within each length.  The
+// return value is zero for a complete code set, negative for an over-
+// subscribed code set, and positive for an incomplete code set.  The tables
+// can be used if the return value is zero or positive, but they cannot be used
+// if the return value is negative.  If the return value is zero, it is not
+// possible for decode() using that table to return an error--any stream of
+// enough bits will resolve to a symbol.  If the return value is positive, then
+// it is possible for decode() using that table to return an error for received
+// codes past the end of the incomplete lengths.
+//
+// Not used by decode(), but used for error checking, h->count[0] is the number
+// of the n symbols not in the code.  So n - h->count[0] is the number of
+// codes.  This is useful for checking for incomplete codes that have more than
+// one symbol, which is an error in a dynamic block.
+//
+// Assumption: for all i in 0..n-1, 0 <= length[i] <= MAXBITS
+// This is assured by the construction of the length arrays in dynamic() and
+// fixed() and is not verified by construct().
+local int construct(struct huffman *h, short *length, int n) {
+    // Count the number of codes of each length.
+    for (int len = 0; len <= MAXBITS; len++)
         h->count[len] = 0;
-    for (symbol = 0; symbol < n; symbol++)
-        (h->count[length[symbol]])++;   /* assumes lengths are within bounds */
-    if (h->count[0] == n)               /* no codes! */
-        return 0;                       /* complete, but decode() will fail */
+    for (int symbol = 0; symbol < n; symbol++)
+        (h->count[length[symbol]])++;   // assumes lengths are within bounds
+    if (h->count[0] == n)               // no codes!
+        return 0;                       // complete, but decode() will fail
 
-    /* check for an over-subscribed or incomplete set of lengths */
-    left = 1;                           /* one possible code of zero length */
-    for (len = 1; len <= MAXBITS; len++) {
-        left <<= 1;                     /* one more bit, double codes left */
-        left -= h->count[len];          /* deduct count from possible codes */
+    // Check for an over-subscribed or incomplete set of lengths.
+    int left = 1;                       // one possible code of zero length
+    for (int len = 1; len <= MAXBITS; len++) {
+        left <<= 1;                     // one more bit, double codes left
+        left -= h->count[len];          // deduct count from possible codes
         if (left < 0)
-            return left;                /* over-subscribed--return negative */
-    }                                   /* left > 0 means incomplete */
+            return left;                // over-subscribed--return negative
+    }                                   // left > 0 means incomplete
 
-    /* generate offsets into symbol table for each length for sorting */
+    // Generate offsets into symbol table for each length for sorting.
+    short offs[MAXBITS+1];      // offsets in symbol table for each length
     offs[1] = 0;
-    for (len = 1; len < MAXBITS; len++)
+    for (int len = 1; len < MAXBITS; len++)
         offs[len + 1] = offs[len] + h->count[len];
 
-    /*
-     * put symbols in table sorted by length, by symbol order within each
-     * length
-     */
-    for (symbol = 0; symbol < n; symbol++)
+    // Put symbols in table sorted by length, by symbol order within each
+    // length.
+    for (int symbol = 0; symbol < n; symbol++)
         if (length[symbol] != 0)
             h->symbol[offs[length[symbol]]++] = symbol;
 
-    /* return zero for complete set, positive for incomplete set */
+    // Return zero for complete set, positive for incomplete set.
     return left;
 }
 
-/*
- * Decode literal/length and distance codes until an end-of-block code.
- */
+// Decode literal/length and distance codes until an end-of-block code.
 local int codes(struct state *s,
                 struct huffman *lencode,
-                struct huffman *distcode)
-{
-    int symbol;         /* decoded symbol */
-    int len;            /* length for copy */
-    unsigned dist;      /* distance for copy */
-    uintmax_t beg;      /* bit count at start of symbol */
-    static const short lens[29] = { /* Size base for length codes 257..285 */
+                struct huffman *distcode) {
+    static const short lens[29] = { // size base for length codes 257..285
         3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31,
         35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-    static const short lext[29] = { /* Extra bits for length codes 257..285 */
+    static const short lext[29] = { // extra bits for length codes 257..285
         0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2,
         3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
-    static const short dists[30] = { /* Offset base for distance codes 0..29 */
+    static const short dists[30] = { // offset base for distance codes 0..29
         1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
         257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
         8193, 12289, 16385, 24577};
-    static const short dext[30] = { /* Extra bits for distance codes 0..29 */
+    static const short dext[30] = { // extra bits for distance codes 0..29
         0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
         7, 7, 8, 8, 9, 9, 10, 10, 11, 11,
         12, 12, 13, 13};
 
-    /* decode literals and length/distance pairs */
+    // Decode literals and length/distance pairs.
+    int symbol;
     do {
-        beg = s->blockin;
+        uintmax_t beg = s->blockin;
         symbol = decode(s, lencode);
         s->symbols++;
         if (symbol < 0)
-            return symbol;              /* invalid symbol */
-        if (symbol < 256) {             /* literal: symbol is the byte */
-            /* write out the literal */
+            return symbol;              // invalid symbol
+        if (symbol < 256) {             // literal: symbol is the byte
+            // Write out the literal.
             if (s->binary) {
                 if (symbol < 0x7f)
                     putc(symbol + 0x80, s->out);
@@ -852,20 +800,20 @@ local int codes(struct state *s,
                 s->max++;
             s->litbits += s->blockin - beg;
         }
-        else if (symbol > 256) {        /* length */
-            /* get and compute length */
+        else if (symbol > 256) {        // length
+            // Get and compute length.
             if (symbol >= MAXLCODES)
-                return IG_BAD_CODE_ERR;         /* invalid fixed code */
+                return IG_BAD_CODE_ERR;         // invalid fixed code
             symbol -= 257;
-            len = lens[symbol] + bits(s, lext[symbol]);
+            int len = lens[symbol] + bits(s, lext[symbol]);
 
-            /* get distance */
+            // Get distance.
             symbol = decode(s, distcode);
             if (symbol < 0)
-                return symbol;                  /* invalid symbol */
-            dist = dists[symbol] + bits(s, dext[symbol]);
+                return symbol;                  // invalid symbol
+            unsigned dist = dists[symbol] + bits(s, dext[symbol]);
 
-            /* check distance and write match */
+            // Check distance and write match.
             if (s->binary) {
                 putc((dist -1) >> 8, s->out);
                 putc(dist - 1, s->out);
@@ -880,10 +828,10 @@ local int codes(struct state *s,
             }
             if (dist > s->max) {
                 warn("distance too far back (%u/%u)", dist, s->max);
-                s->max = MAXDIST;       /* issue warning only once */
+                s->max = MAXDIST;       // issue warning only once
             }
 
-            /* update state for match */
+            // Update state for match.
             if (dist > s->blockout) {
                 dist -= s->blockout;
                 if (dist > s->reach)
@@ -899,10 +847,10 @@ local int codes(struct state *s,
                     s->max += len;
             }
         }
-    } while (symbol != 256);            /* end of block symbol */
+    } while (symbol != 256);            // end of block symbol
     s->symbols--;
 
-    /* write end of block code */
+    // Write end of block code.
     if (s->data) {
         if (s->col) {
             putc('\n', s->out);
@@ -931,27 +879,24 @@ local int codes(struct state *s,
         end(s);
     }
 
-    /* done with a valid fixed or dynamic block */
+    // Done with a valid fixed or dynamic block.
     return IG_OK;
 }
 
-/*
- * Process a fixed codes block.
- */
-local int fixed(struct state *s)
-{
-    static int virgin = 1;
+// Process a fixed codes block.
+local int fixed(struct state *s) {
     static short lencnt[MAXBITS+1], lensym[FIXLCODES];
     static short distcnt[MAXBITS+1], distsym[MAXDCODES];
     static struct huffman lencode = {lencnt, lensym};
     static struct huffman distcode = {distcnt, distsym};
 
-    /* build fixed huffman tables if first call (may not be thread safe) */
+    // Build fixed huffman tables if first call (not thread safe).
+    static int virgin = 1;
     if (virgin) {
         int symbol;
         short lengths[FIXLCODES];
 
-        /* literal/length table */
+        // Literal/length table.
         for (symbol = 0; symbol < 144; symbol++)
             lengths[symbol] = 8;
         for (; symbol < 256; symbol++)
@@ -962,45 +907,31 @@ local int fixed(struct state *s)
             lengths[symbol] = 8;
         construct(&lencode, lengths, FIXLCODES);
 
-        /* distance table */
+        // Distance table.
         for (symbol = 0; symbol < MAXDCODES; symbol++)
             lengths[symbol] = 5;
         construct(&distcode, lengths, MAXDCODES);
 
-        /* do this just once */
+        // Do this just once.
         virgin = 0;
     }
 
-    /* decode data until end-of-block code */
+    // Decode data until end-of-block code.
     return codes(s, &lencode, &distcode);
 }
 
-/*
- * Process a dynamic codes block.
- */
-local int dynamic(struct state *s)
-{
-    int nlen, ndist, ncode;             /* number of lengths in descriptor */
-    int index;                          /* index of lengths[] */
-    int err;                            /* construct() return value */
-    short lengths[MAXCODES];            /* descriptor code lengths */
-    short lencnt[MAXBITS+1], lensym[MAXLCODES];         /* lencode memory */
-    short distcnt[MAXBITS+1], distsym[MAXDCODES];       /* distcode memory */
-    struct huffman lencode = {lencnt, lensym};          /* length code */
-    struct huffman distcode = {distcnt, distsym};       /* distance code */
-    static const short order[19] =      /* permutation of code length codes */
-        {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
-
-    /* get number of lengths in each table, check lengths */
+// Process a dynamic codes block.
+local int dynamic(struct state *s) {
+    // Get number of lengths in each table, check lengths.
     if (s->data && s->col) {
         putc('\n', s->out);
         s->col = 0;
     }
-    nlen = bits(s, 5) + 257;
-    ndist = bits(s, 5) + 1;
-    ncode = bits(s, 4) + 4;
+    int nlen = bits(s, 5) + 257;
+    int ndist = bits(s, 5) + 1;
+    int ncode = bits(s, 4) + 4;
     if (nlen > MAXLCODES || ndist > MAXDCODES)
-        return IG_TOO_MANY_CODES_ERR;       /* bad counts */
+        return IG_TOO_MANY_CODES_ERR;       // bad counts
     if (s->binary) {
         putc(nlen - 256, s->out);
         putc(ndist, s->out);
@@ -1009,7 +940,11 @@ local int dynamic(struct state *s)
     if (s->draw)
         fprintf(s->out, "count %d %d %d\n", nlen, ndist, ncode);
 
-    /* read code length code lengths (really), missing lengths are zero */
+    // Read code length code lengths (really), missing lengths are zero.
+    short lengths[MAXCODES];            // descriptor code lengths
+    static const short order[19] =      // permutation of code length codes
+        {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
+    int index;
     for (index = 0; index < ncode; index++) {
         lengths[order[index]] = bits(s, 3);
         if (s->binary)
@@ -1018,49 +953,48 @@ local int dynamic(struct state *s)
     for (; index < 19; index++)
         lengths[order[index]] = 0;
 
-    /* write code length code lengths */
+    // Write code length code lengths.
     if (s->draw)
         for (index = 0; index < 19; index++)
             if (lengths[index] != 0)
                 fprintf(s->out, "code %d %d\n", index, lengths[index]);
 
-    /* build huffman table for code lengths codes (use lencode temporarily) */
-    err = construct(&lencode, lengths, 19);
+    // Build huffman table for code lengths codes (use lencode temporarily).
+    short lencnt[MAXBITS+1], lensym[MAXLCODES];         // lencode memory
+    struct huffman lencode = {lencnt, lensym};          // length code
+    int err = construct(&lencode, lengths, 19);
     if (err < 0)
-        return IG_CODE_LENGTHS_CODE_OVER_ERR;   /* oversubscribed */
+        return IG_CODE_LENGTHS_CODE_OVER_ERR;   // oversubscribed
     else if (err > 0)
-        return IG_CODE_LENGTHS_CODE_UNDER_ERR;  /* incomplete */
+        return IG_CODE_LENGTHS_CODE_UNDER_ERR;  // incomplete
 
-    /* read length/literal and distance code length tables */
+    // Read length/literal and distance code length tables.
     index = 0;
     while (index < nlen + ndist) {
-        int symbol;             /* decoded value */
-        int len;                /* last length to repeat */
-
-        symbol = decode(s, &lencode);
+        int symbol = decode(s, &lencode);
         if (symbol < 0)
-            return symbol;              /* invalid symbol */
-        if (symbol < 16) {              /* length in 0..15 */
+            return symbol;              // invalid symbol
+        if (symbol < 16) {              // length in 0..15
             if (s->binary)
                 putc(symbol + 1, s->out);
             if (s->draw)
                 putval(symbol, "lens", &s->col, s->out);
             lengths[index++] = symbol;
         }
-        else {                          /* repeat instruction */
-            len = -1;                   /* assume repeating zeros */
-            if (symbol == 16) {         /* repeat last length 3..6 times */
+        else {                          // repeat instruction
+            int len = -1;               // assume repeating zeros
+            if (symbol == 16) {         // repeat last length 3..6 times
                 if (index == 0)
-                    return IG_REPEAT_NO_FIRST_ERR;  /* no last length! */
-                len = lengths[index - 1];           /* last length */
+                    return IG_REPEAT_NO_FIRST_ERR;  // no last length!
+                len = lengths[index - 1];           // last length
                 symbol = 3 + bits(s, 2);
             }
-            else if (symbol == 17)      /* repeat zero 3..10 times */
+            else if (symbol == 17)      // repeat zero 3..10 times
                 symbol = 3 + bits(s, 3);
-            else                        /* == 18, repeat zero 11..138 times */
+            else                        // == 18, repeat zero 11..138 times
                 symbol = 11 + bits(s, 7);
             if (index + symbol > nlen + ndist)
-                return IG_REPEAT_TOO_MANY_ERR;  /* too many lengths! */
+                return IG_REPEAT_TOO_MANY_ERR;  // too many lengths!
             if (s->binary)
                 putc(symbol + (len == -1 ? 14 : 18), s->out);
             if (s->draw) {
@@ -1073,7 +1007,7 @@ local int dynamic(struct state *s)
             }
             if (len == -1)
                 len = 0;
-            while (symbol--)            /* repeat last or zero symbol times */
+            while (symbol--)            // repeat last or zero symbol times
                 lengths[index++] = len;
         }
     }
@@ -1087,63 +1021,59 @@ local int dynamic(struct state *s)
         fprintf(s->out, "! stats table %" PRIuMAX ":%" PRIuMAX "\n",
                 (s->blockin - 3) >> 3, (s->blockin - 3) & 7);
 
-    /* write literal/length and distance code lengths */
+    // Write literal/length and distance code lengths.
     if (s->tree) {
         for (index = 0; index < nlen; index++)
             if (lengths[index] != 0)
                 fprintf(s->out, "%slitlen %d %d\n", s->draw ? "! " : "",
                         index, lengths[index]);
-        for (index = nlen; index < nlen + ndist; index++)
+        for (; index < nlen + ndist; index++)
             if (lengths[index] != 0)
                 fprintf(s->out, "%sdist %d %d\n", s->draw ? "! " : "",
                         index - nlen, lengths[index]);
     }
 
-    /* check for end-of-block code -- there better be one! */
+    // Check for end-of-block code -- there better be one!
     if (lengths[256] == 0)
         return IG_NO_END_CODE_ERR;
 
-    /* build huffman table for literal/length codes */
+    // Build huffman table for literal/length codes.
     err = construct(&lencode, lengths, nlen);
     if (err < 0)
         return IG_LITLEN_CODE_OVER_ERR;
     else if (err > 0 && nlen - lencode.count[0] != 1)
-        return IG_LITLEN_CODE_UNDER_ERR;    /* incomplete with one code ok */
+        return IG_LITLEN_CODE_UNDER_ERR;    // incomplete with one code ok
 
-    /* build huffman table for distance codes */
+    // Build huffman table for distance codes.
+    short distcnt[MAXBITS+1], distsym[MAXDCODES];       // distcode memory
+    struct huffman distcode = {distcnt, distsym};       // distance code
     err = construct(&distcode, lengths + nlen, ndist);
     if (err < 0)
         return IG_DIST_CODE_OVER_ERR;
     else if (err > 0 && ndist - distcode.count[0] != 1)
-        return IG_DIST_CODE_UNDER_ERR;      /* incomplete with one code ok */
+        return IG_DIST_CODE_UNDER_ERR;      // incomplete with one code ok
 
-    /* decode data until end-of-block code */
+    // Decode data until end-of-block code.
     return codes(s, &lencode, &distcode);
 }
 
-/*
- * Inflate in to out, writing a defgen description of the input stream.  On
- * success, the return value of infgen() is IG_OK (0).  If there is an error in
- * the source data, i.e. it is not in the deflate format, then a negative value
- * is returned.  If there is not enough input available, then IG_INCOMPLETE is
- * returned.
- *
- * infgen()'s return codes are documented near the top of this source file.
- */
-local int infgen(struct state *s)
-{
-    int last, type;             /* block information */
-    int err;                    /* return value */
-
-    /* initialize input state */
+// Inflate in to out, writing a defgen description of the input stream.  On
+// success, the return value of infgen() is IG_OK (0).  If there is an error in
+// the source data, i.e. it is not in the deflate format, then a negative value
+// is returned.  If there is not enough input available, then IG_INCOMPLETE is
+// returned.
+//
+// infgen()'s return codes are documented near the top of this source file.
+local int infgen(struct state *s) {
+    // Initialize input state.
     s->bitcnt = 0;
     s->bitbuf = 0;
 
-    /* initialize output state */
+    // Initialize output state.
     s->col = 0;
     s->max = 0;
 
-    /* initialize statistics */
+    // Initialize statistics.
     s->blocks = 0;
     s->inbits = 0;
     s->outbytes = 0;
@@ -1152,11 +1082,13 @@ local int infgen(struct state *s)
     s->matchtot = 0;
     s->littot = 0;
 
-    /* return if bits() or decode() tries to read past available input */
-    if (setjmp(s->env) != 0)            /* if came back here via longjmp() */
-        err = IG_INCOMPLETE;            /* then skip do-loop, return error */
+    // Return if bits() or decode() tries to read past available input.
+    int err = 0;
+    if (setjmp(s->env) != 0)            // if came back here via longjmp()
+        err = IG_INCOMPLETE;            // then skip do-loop, return error
     else {
-        /* process blocks until last block or error */
+        // Process blocks until last block or error.
+        int last;
         do {
             if (s->data)
                 fputs("!\n", s->out);
@@ -1167,10 +1099,10 @@ local int infgen(struct state *s)
             s->matches = 0;
             s->matchlen = 0;
             s->litbits = 0;
-            last = bits(s, 1);          /* one if last block */
+            last = bits(s, 1);          // one if last block
             if (s->data && last)
                 fputs("last\n", s->out);
-            type = bits(s, 2);          /* block type 0..3 */
+            int type = bits(s, 2);      // block type 0..3
             if (s->binary) {
                 putc(0xff, s->out);
                 putc((type << 1) + last, s->out);
@@ -1197,21 +1129,21 @@ local int infgen(struct state *s)
                     fputs("dynamic\n", s->out);
                 err = dynamic(s);
                 break;
-            default:    /* 3 */
+            default:    // 3
                 if (s->data)
                     fputs("block3\nend\n", s->out);
                 err = IG_BLOCK_TYPE_ERR;
             }
             if (err != IG_OK)
-                break;                  /* return with error */
+                break;                  // return with error
         } while (!last);
     }
 
-    /* finish off dangling literal line */
+    // Finish off dangling literal line.
     if (s->data && s->col)
         putc('\n', s->out);
 
-    /* write the leftovers information */
+    // Write the leftovers information.
     if (s->binary) {
         putc(0xff, s->out);
         putc(8, s->out);
@@ -1220,7 +1152,7 @@ local int infgen(struct state *s)
     if (s->data && s->bitcnt && s->bitbuf)
         fprintf(s->out, "bound %d\n", s->bitbuf);
 
-    /* write final statistics */
+    // Write final statistics.
     if (s->stats) {
         fprintf(s->out, "! stats total inout %" PRIuMAX ":%" PRIuMAX
                        " (%" PRIuMAX ") %" PRIuMAX "\n",
@@ -1240,13 +1172,12 @@ local int infgen(struct state *s)
             fprintf(s->out, "! stats total no matches\n");
     }
 
-    /* return error state */
+    // Return error state.
     return err;
 }
 
-/* provide help for command options */
-local void help(void)
-{
+// Provide help for the command options.
+local void help(void) {
     fputs(
           "\n"
           "infgen " IG_VERSION "\n"
@@ -1266,27 +1197,19 @@ local void help(void)
           stderr);
 }
 
-/* get next byte of input, or abort if none */
+// Get the next byte of input, or abort if none.
 #define NEXT(in) ((n = getc(in)) != EOF ? n : (col ? putc('\n', s.out) : 0, \
                   bail("unexpected end of input")))
 
-/* Read a gzip, zlib, or raw deflate stream from stdin or a provided path, and
-   write a defgen description of the stream to stdout. */
-int main(int argc, char **argv)
-{
-    int info, head, wrap;
-    int ret, trail, n;
-    unsigned val, win;
-    unsigned long num;
-    char *arg, *path;
-    int col;
+// Read a gzip, zlib, or raw deflate stream from stdin or a provided path, and
+// write a defgen description of the stream to stdout.
+int main(int argc, char **argv) {
+    // Process command line options.
+    char *path = NULL;
+    int info = 0;
+    int head = 1;
+    int wrap = 1;
     struct state s;
-
-    /* process command line options */
-    path = NULL;
-    info = 0;
-    head = 1;
-    wrap = 1;
     s.binary = 0;
     s.data = 1;
     s.tree = 1;
@@ -1294,7 +1217,7 @@ int main(int argc, char **argv)
     s.stats = 0;
     s.win = MAXDIST;
     while (--argc) {
-        arg = *++argv;
+        char *arg = *++argv;
         if (*arg++ != '-') {
             if (path != NULL)
                 bail("only one input file permitted (%s)", arg - 1);
@@ -1322,13 +1245,13 @@ int main(int argc, char **argv)
     if (s.data == 0)
         s.draw = 0;
 
-    /* set input and output */
+    // Set input and output.
     if (path == NULL) {
         if (isatty(0)) {
             help();
             return 0;
         }
-        errno = 0;          /* isatty(0) false leaves errno as ENOTTY */
+        errno = 0;          // isatty(0) false leaves errno as ENOTTY
         s.in = stdin;
         SET_BINARY_MODE(s.in);
     }
@@ -1342,25 +1265,27 @@ int main(int argc, char **argv)
         info = wrap = s.data = s.tree = s.draw = s.stats = 0;
         SET_BINARY_MODE(s.out);
     }
-    col = 0;
+    int col = 0;
 
-    /* say what wrote this */
+    // Say what wrote this.
     if (wrap)
-        fputs("! infgen 2.4 output\n", s.out);
+        fputs("! infgen " IG_VERSION " output\n", s.out);
 
-    /* process concatenated streams */
+    // Process concatenated streams.
+    int ret;
     do {
-        /* skip header, if any, save header type as trailer size */
+        // Skip header, if any, save header type as trailer size.
         ret = getc(s.in);
-        n = getc(s.in);
-        val = ((unsigned)ret << 8) + (unsigned)n;   /* magic two bytes */
+        int n = getc(s.in);
+        unsigned val = ((unsigned)ret << 8) + (unsigned)n;
+        int trail;
         if (ret == EOF) {
-            /* nothing after the last stream, or empty file */
+            // nothing after the last stream, or empty file
             ret = 0;
             break;
         }
         else if (head && n != EOF && val == 0x1f8b) {
-            /* gzip header */
+            // gzip header
             if (wrap)
                 fputs("!\n", s.out);
             if (NEXT(s.in) != 8)
@@ -1370,7 +1295,7 @@ int main(int argc, char **argv)
                 bail("reserved gzip flags set (%02x)", ret);
             if (info && (ret & 1))
                 fputs("text\n", s.out);
-            num = NEXT(s.in);
+            unsigned long num = NEXT(s.in);
             num += NEXT(s.in) << 8;
             num += NEXT(s.in) << 16;
             num += NEXT(s.in) << 24;
@@ -1384,7 +1309,7 @@ int main(int argc, char **argv)
             val = NEXT(s.in);
             if (info && val != 3)
                 fprintf(s.out, "os %u\n", val);
-            if (ret & 4) {              /* extra field */
+            if (ret & 4) {              // extra field
                 val = NEXT(s.in);
                 val += NEXT(s.in) << 8;
                 if (val == 0) {
@@ -1401,7 +1326,7 @@ int main(int argc, char **argv)
                     col = 0;
                 }
             }
-            if (ret & 8) {              /* file name */
+            if (ret & 8) {              // file name
                 if (NEXT(s.in) == 0) {
                     if (info)
                         fputs("name '\n", s.out);
@@ -1416,7 +1341,7 @@ int main(int argc, char **argv)
                     col = 0;
                 }
             }
-            if (ret & 16) {             /* comment field */
+            if (ret & 16) {             // comment field
                 if (NEXT(s.in) == 0) {
                     if (info)
                         fputs("comment '\n", s.out);
@@ -1431,7 +1356,7 @@ int main(int argc, char **argv)
                     col = 0;
                 }
             }
-            if (ret & 2) {              /* header crc */
+            if (ret & 2) {              // header crc
                 NEXT(s.in);
                 NEXT(s.in);
                 if (info)
@@ -1443,13 +1368,13 @@ int main(int argc, char **argv)
         }
         else if (head && n != EOF && val % 31 == 0 && (ret & 0xf) == 8 &&
                  (ret >> 4) < 8) {
-            /* zlib header */
+            // zlib header.
             if (wrap)
                 fputs("!\n", s.out);
-            if (info && (val & 0xe0) != 0x80)   /* compression level */
+            if (info && (val & 0xe0) != 0x80)   // compression level
                 fprintf(s.out, "level %d\n", (val >> 6) & 3);
-            if (val & 0x20) {                   /* preset dictionary */
-                num = NEXT(s.in);
+            if (val & 0x20) {                   // preset dictionary
+                unsigned long num = NEXT(s.in);
                 num = (num << 8) + NEXT(s.in);
                 num = (num << 8) + NEXT(s.in);
                 num = (num << 8) + NEXT(s.in);
@@ -1457,7 +1382,7 @@ int main(int argc, char **argv)
                     fprintf(s.out, "dict %lu\n", num);
             }
             ret = (ret >> 4) + 8;
-            win = 1U << ret;        /* window size */
+            s.win = 1U << ret;          // set window size from header
             trail = 4;
             if (info && ret != 15)
                 fprintf(s.out, "zlib %d\n", ret);
@@ -1465,18 +1390,18 @@ int main(int argc, char **argv)
                 fputs("zlib\n", s.out);
         }
         else {
-            /* raw deflate data, put non-header bytes back (assumes two ok) */
+            // Raw deflate data, put non-header bytes back (assumes two ok).
             ungetc(n, s.in);
-            ret = ungetc(ret, s.in);    /* this should work, but ... */
-            if (ret == EOF)             /* only one ungetc() guaranteed */
+            ret = ungetc(ret, s.in);    // this should work, but ...
+            if (ret == EOF)             // only one ungetc() guaranteed
                 bail("could not ungetc() a second time (!)");
             trail = 0;
         }
 
-        /* process compressed data to produce a defgen description */
+        // Process compressed data to produce a defgen description.
         ret = infgen(&s);
 
-        /* check return value and trailer size */
+        // Check return value and trailer size.
         if (ret > 0)
             warn("incomplete deflate data");
         else if (ret < 0)
@@ -1493,7 +1418,7 @@ int main(int argc, char **argv)
             }
         }
 
-        /* write defgen trailer (note: trailer is not validated) */
+        // Write defgen trailer (note: trailer is not validated).
         if (ret == 0 && wrap) {
             if (trail == 4)
                 fputs("!\nadler\n", s.out);
@@ -1502,7 +1427,7 @@ int main(int argc, char **argv)
         }
     } while (ret == 0);
 
-    /* done */
+    // Done.
     fclose(s.out);
     fclose(s.in);
     if ((ferror(s.in) || ferror(s.out)) && errno)
