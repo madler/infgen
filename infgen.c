@@ -10,8 +10,8 @@
  uncompressed data is never generated) -- only the fact that the trailer is
  present is checked.
 
- Usage: infgen [-d] [-q[q]] [-i] [-s] [-r] [-b] < foo.gz > foo.def
-    or: infgen [-d] [-q[q]] [-i] [-s] [-r] [-b] foo.gz > foo.def
+ Usage: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b] < foo.gz > foo.def
+    or: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b] foo.gz > foo.def
 
  where foo.gz is a gzip file (it could have been a zlib or raw deflate stream
  as well), and foo.def is a defgen description of the file or stream, which is
@@ -19,18 +19,19 @@
  literal/length and distance code lengths for dynamic blocks.  The -d (dynamic)
  option generates directives to exactly reconstruct the dynamic block headers.
  With -d, the code lengths are still included, but now as comments instead of
- directives.  The -q (quiet) option supresses the dynamic block code lengths,
- whether as directives or as comments.  The -qq (really quiet) option supresses
- the output of all deflate stream descriptions, leaving only the header and
- trailer information.  However if -qq is used with -s, the statistics
- information on the deflate stream is still included. The -i (info) option
- generates additional directives for gzip or zlib headers that permit their
- exact reconstruction.  The -s (statistics) option writes out comments with
- statistics for each deflate block and totals at the end.  The -r (raw) option
- forces the interpretation of the input as a raw deflate stream, for those
- cases where the start of a raw stream happens to mimic a valid zlib header.
- The -b (binary) option writes a compact binary format instead of the defgen
- format.  In that case, any other options except -r are ignored.
+ directives.  The -dd option is the same as -d, but with the bit sequences for
+ each item shown as a comment after the item.  The -q (quiet) option supresses
+ the dynamic block code lengths, whether as directives or as comments.  The -qq
+ (really quiet) option supresses the output of all deflate stream descriptions,
+ leaving only the header and trailer information.  However if -qq is used with
+ -s, the statistics information on the deflate stream is still included. The -i
+ (info) option generates additional directives for gzip or zlib headers that
+ permit their exact reconstruction.  The -s (statistics) option writes out
+ comments with statistics for each deflate block and totals at the end.  The -r
+ (raw) option forces the interpretation of the input as a raw deflate stream,
+ for those cases where the start of a raw stream happens to mimic a valid zlib
+ header. The -b (binary) option writes a compact binary format instead of the
+ defgen format.  In that case, any other options except -r are ignored.
 
  Both the defgen and compact binary formats are described below.
  */
@@ -465,6 +466,7 @@ local inline void warn(char *fmt, ...) {
 #define MAXCODES (MAXLCODES+MAXDCODES)  // maximum codes lengths to read
 #define FIXLCODES 288           // number of fixed literal/length codes
 #define MAXDIST 32768           // maximum match distance
+#define MAXSEQS 20              // maximum number of bit groups to save
 
 // infgen() input and output state.
 struct state {
@@ -483,6 +485,9 @@ struct state {
     int bitcnt;                 // number of bits in bit buffer
     int bitbuf;                 // bit buffer
     FILE *in;                   // input file
+    int seqs;                   // number of bit sequences saved
+    short seq[MAXSEQS];         // bits in each sequence
+    char len[MAXSEQS];          // length of each sequence in bits
 
     // Current block statistics.
     unsigned reach;             // maximum distance before current block
@@ -507,33 +512,77 @@ struct state {
 };
 
 #define LINELEN 79      // target line length for data and literal commands
+#define SEQCOL 24       // column in which to start bit sequence comments
 
-// Write a byte in a literal or data defgen command, keeping the line length
-// reasonable and using string literals whenever possible.
-local inline void putval(int val, char *command, int *col, FILE *out) {
+// Write the bits that composed the last item, as a comment starting in column
+// SEQCOL.
+local inline void putbits(struct state *s) {
+    if (s->draw > 1) {
+        // Go to column SEQCOL.
+        s->col = abs(s->col);
+        while (s->col < SEQCOL) {
+            putc(' ', s->out);
+            s->col++;
+        }
+
+        // Start a comment.
+        putc('!', s->out);
+
+        // Write the sequences in reverse order, since they were read from
+        // bottom up. In each sequence, write the most to least significant
+        // bit, i.e. the usual order.
+        while (s->seqs) {
+            s->seqs--;
+            short seq = s->seq[s->seqs];
+            int len = s->len[s->seqs];
+            if (len) {
+                putc(' ', s->out);
+                do {
+                    fputc('0' + ((seq >> --len) & 1), s->out);
+                } while (len);
+            }
+        }
+    }
+
+    // End the comment and the line.
+    putc('\n', s->out);
+    s->col = 0;
+}
+
+// Write token at the start of a line and val as a character or decimal value,
+// continuing the line. Keep the line length reasonable and using string
+// literals whenever possible. If seq is true and s->draw > 1, also display the
+// sequences of bits that led to this value.
+local inline void putval(int val, char *token, int seq, struct state *s) {
+    seq = seq && s->draw > 1;
+
     // New line if too long or decimal after string.
-    if (*col == 0 || (*col < 0 ? -*col : *col) > LINELEN - 4 ||
-        (*col < 0 && (val < 0x20 || val > 0x7e))) {
-        if (*col)
-            putc('\n', out);
-        *col = fputs(command, out);
+    if (s->col == 0 || abs(s->col) > LINELEN - 4 ||
+        (s->col < 0 && (val < 0x20 || val > 0x7e)) || seq) {
+        if (s->col)
+            putc('\n', s->out);
+        s->col = fprintf(s->out, "%s", token);
     }
 
     // String literal (already range-checked above).
-    if (*col < 0) {
-        putc(val, out);
-        (*col)--;
+    if (s->col < 0) {
+        putc(val, s->out);
+        s->col--;
     }
 
     // New string literal (mark with negative lit).
     else if (val >= 0x20 && val <= 0x7e) {
-        *col += fprintf(out, " '%c", val);
-        *col = -*col;
+        s->col += fprintf(s->out, " '%c", val);
+        s->col = -s->col;
     }
 
     // Decimal literal.
     else
-        *col += fprintf(out, " %u", val);
+        s->col += fprintf(s->out, " %u", val);
+
+    // Append a comment with the sequences of bits, if requested.
+    if (seq)
+        putbits(s);
 }
 
 // Return need bits from the input stream.  This always leaves less than
@@ -556,13 +605,22 @@ local inline int bits(struct state *s, int need) {
         s->bitcnt += 8;
     }
 
-    // Drop need bits and update buffer, always zero to seven bits left.
+    // Drop need bits and update buffer, always with 0..7 bits left. Leave need
+    // bits in val.
     s->bitbuf = (int)(val >> need);
     s->bitcnt -= need;
     s->blockin += need;
+    val &= (1L << need) - 1;
 
-    // Return need bits, zeroing the bits above that.
-    return (int)(val & ((1L << need) - 1));
+    // Save bit sequence.
+    if (s->draw > 1 && s->seqs < MAXSEQS) {
+        s->seq[s->seqs] = val;
+        s->len[s->seqs] = need;
+        s->seqs++;
+    }
+
+    // Return need bits.
+    return (int)val;
 }
 
 // Show and accumulate statistics at end of block.
@@ -581,9 +639,11 @@ local void end(struct state *s) {
 // Process a stored block.
 local int stored(struct state *s) {
     // Discard leftover bits from current byte (assumes s->bitcnt < 8).
-    s->blockin += s->bitcnt;
-    s->bitcnt = 0;
-    s->bitbuf = 0;
+    (void)bits(s, s->bitcnt);
+    if (s->draw > 1) {
+        s->col = 0;
+        putbits(s);
+    }
 
     // Get length and check against its one's complement.
     unsigned len = getc(s->in);
@@ -627,7 +687,7 @@ local int stored(struct state *s) {
             }
         }
         if (s->data)
-            putval(octet, "data", &s->col, s->out);
+            putval(octet, "data", 0, s);
         s->blockout++;
         s->symbols++;
     }
@@ -673,10 +733,19 @@ local inline int decode(struct state *s, struct huffman *h) {
             bitbuf >>= 1;
             int count = *next++;
             if (code < first + count) {
-                // This code is length len. Update state and return symbol.
+                // This code is length len. Save bit sequence.
+                if (s->draw > 1 && s->seqs < MAXSEQS) {
+                    s->seq[s->seqs] = code;
+                    s->len[s->seqs] = len;
+                    s->seqs++;
+                }
+
+                // Update state.
                 s->bitbuf = bitbuf;
                 s->bitcnt = (s->bitcnt - len) & 7;
                 s->blockin += len;
+
+                // Return symbol.
                 return h->symbol[index + (code - first)];
             }
 
@@ -794,7 +863,7 @@ local int codes(struct state *s,
                 }
             }
             if (s->data)
-                putval(symbol, "literal", &s->col, s->out);
+                putval(symbol, "literal", 1, s);
             s->blockout += 1;
             if (s->max < s->win)
                 s->max++;
@@ -824,7 +893,8 @@ local int codes(struct state *s,
                     putc('\n', s->out);
                     s->col = 0;
                 }
-                fprintf(s->out, "match %d %u\n", len, dist);
+                s->col = fprintf(s->out, "match %d %u", len, dist);
+                putbits(s);
             }
             if (dist > s->max) {
                 warn("distance too far back (%u/%u)", dist, s->max);
@@ -856,7 +926,9 @@ local int codes(struct state *s,
             putc('\n', s->out);
             s->col = 0;
         }
-        fputs("end\n", s->out);
+        fputs("end", s->out);
+        s->col = 3;
+        putbits(s);
     }
     if (s->stats) {
         if (s->symbols != s->matches)
@@ -937,8 +1009,10 @@ local int dynamic(struct state *s) {
         putc(ndist, s->out);
         putc(ncode, s->out);
     }
-    if (s->draw)
-        fprintf(s->out, "count %d %d %d\n", nlen, ndist, ncode);
+    if (s->draw) {
+        s->col = fprintf(s->out, "count %d %d %d", nlen, ndist, ncode);
+        putbits(s);
+    }
 
     // Read code length code lengths (really), missing lengths are zero.
     short lengths[MAXCODES];            // descriptor code lengths
@@ -946,18 +1020,17 @@ local int dynamic(struct state *s) {
         {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
     int index;
     for (index = 0; index < ncode; index++) {
-        lengths[order[index]] = bits(s, 3);
+        int len = bits(s, 3);
+        lengths[order[index]] = len;
         if (s->binary)
-            putc(lengths[order[index]] + 1, s->out);
+            putc(len + 1, s->out);
+        if (s->draw && len) {
+            s->col = fprintf(s->out, "code %d %d", order[index], len);
+            putbits(s);
+        }
     }
     for (; index < 19; index++)
         lengths[order[index]] = 0;
-
-    // Write code length code lengths.
-    if (s->draw)
-        for (index = 0; index < 19; index++)
-            if (lengths[index] != 0)
-                fprintf(s->out, "code %d %d\n", index, lengths[index]);
 
     // Build huffman table for code lengths codes (use lencode temporarily).
     short lencnt[MAXBITS+1], lensym[MAXLCODES];         // lencode memory
@@ -978,7 +1051,7 @@ local int dynamic(struct state *s) {
             if (s->binary)
                 putc(symbol + 1, s->out);
             if (s->draw)
-                putval(symbol, "lens", &s->col, s->out);
+                putval(symbol, "lens", 1, s);
             lengths[index++] = symbol;
         }
         else {                          // repeat instruction
@@ -1002,8 +1075,9 @@ local int dynamic(struct state *s) {
                     putc('\n', s->out);
                     s->col = 0;
                 }
-                fprintf(s->out, "%s %d\n", len == -1 ? "zeros" : "repeat",
-                        symbol);
+                s->col = fprintf(s->out, "%s %d",
+                                 len == -1 ? "zeros" : "repeat", symbol);
+                putbits(s);
             }
             if (len == -1)
                 len = 0;
@@ -1068,6 +1142,7 @@ local int infgen(struct state *s) {
     // Initialize input state.
     s->bitcnt = 0;
     s->bitbuf = 0;
+    s->seqs = 0;
 
     // Initialize output state.
     s->col = 0;
@@ -1100,8 +1175,11 @@ local int infgen(struct state *s) {
             s->matchlen = 0;
             s->litbits = 0;
             last = bits(s, 1);          // one if last block
-            if (s->data && last)
-                fputs("last\n", s->out);
+            if (s->data && last) {
+                fputs("last", s->out);
+                s->col = 4;
+                putbits(s);
+            }
             int type = bits(s, 2);      // block type 0..3
             if (s->binary) {
                 putc(0xff, s->out);
@@ -1112,26 +1190,36 @@ local int infgen(struct state *s) {
                 if (s->binary)
                     putc(s->bitbuf, s->out);
                 if (s->data) {
+                    fputs("stored", s->out);
+                    s->col = 6;
                     if (s->bitbuf)
-                        fprintf(s->out, "stored %d\n", s->bitbuf);
-                    else
-                        fputs("stored\n", s->out);
+                        s->col += fprintf(s->out, " %d", s->bitbuf);
+                    putbits(s);
                 }
                 err = stored(s);
                 break;
             case 1:
-                if (s->data)
-                    fputs("fixed\n", s->out);
+                if (s->data) {
+                    fputs("fixed", s->out);
+                    s->col = 5;
+                    putbits(s);
+                }
                 err = fixed(s);
                 break;
             case 2:
-                if (s->data)
-                    fputs("dynamic\n", s->out);
+                if (s->data) {
+                    fputs("dynamic", s->out);
+                    s->col = 7;
+                    putbits(s);
+                }
                 err = dynamic(s);
                 break;
             default:    // 3
-                if (s->data)
-                    fputs("block3\nend\n", s->out);
+                if (s->data) {
+                    fputs("block3", s->out);
+                    s->col = 6;
+                    putbits(s);
+                }
                 err = IG_BLOCK_TYPE_ERR;
             }
             if (err != IG_OK)
@@ -1142,6 +1230,7 @@ local int infgen(struct state *s) {
     // Finish off dangling literal line.
     if (s->data && s->col)
         putc('\n', s->out);
+    s->col = 0;
 
     // Write the leftovers information.
     if (s->binary) {
@@ -1150,7 +1239,15 @@ local int infgen(struct state *s) {
         putc(s->bitbuf, s->out);
     }
     if (s->data && s->bitcnt && s->bitbuf)
-        fprintf(s->out, "bound %d\n", s->bitbuf);
+        s->col += fprintf(s->out, "bound %d", s->bitbuf);
+    if (s->draw > 1 && s->bitcnt && s->seqs < MAXSEQS) {
+        s->seq[s->seqs] = s->bitbuf;
+        s->len[s->seqs] = s->bitcnt;
+        s->seqs++;
+        putbits(s);
+    }
+    else if (s->data && s->bitcnt && s->bitbuf)
+        putc('\n', s->out);
 
     // Write final statistics.
     if (s->stats) {
@@ -1183,10 +1280,11 @@ local void help(void) {
           "infgen " IG_VERSION "\n"
           "Usage:\n"
           "\n"
-          "  infgen [-dq[q]isrb] input_path > output_path\n"
-          "  infgen [-dq[q]isrb] < input_path > output_path\n"
+          "  infgen [-d[d]q[q]isrb] input_path > output_path\n"
+          "  infgen [-d[d]q[q]isrb] < input_path > output_path\n"
           "\n"
           "    -d   Write raw dynamic header (code lengths in comments)\n"
+          "    -dd  Also show the bits for each element displayed\n"
           "    -q   Do not write dynamic code lengths (comments or not)\n"
           "    -qq  Do not write deflate stream description at all\n"
           "    -i   Include detailed gzip / zlib header descriptions\n"
@@ -1198,7 +1296,7 @@ local void help(void) {
 }
 
 // Get the next byte of input, or abort if none.
-#define NEXT(in) ((n = getc(in)) != EOF ? n : (col ? putc('\n', s.out) : 0, \
+#define NEXT(in) ((n = getc(in)) != EOF ? n : (s.col ? putc('\n', s.out) : 0, \
                   bail("unexpected end of input")))
 
 // Read a gzip, zlib, or raw deflate stream from stdin or a provided path, and
@@ -1234,7 +1332,7 @@ int main(int argc, char **argv) {
                 else
                     s.data = 0;
                 break;
-            case 'd':  s.draw = 1;      break;
+            case 'd':  s.draw++;        break;
             case 's':  s.stats = 1;     break;
             case 'r':  head = 0;        break;
             case 'h':  help();          return 0;
@@ -1265,7 +1363,7 @@ int main(int argc, char **argv) {
         info = wrap = s.data = s.tree = s.draw = s.stats = 0;
         SET_BINARY_MODE(s.out);
     }
-    int col = 0;
+    s.col = 0;
 
     // Say what wrote this.
     if (wrap)
@@ -1319,11 +1417,11 @@ int main(int argc, char **argv) {
                 else
                     do {
                         if (info)
-                            putval(NEXT(s.in), "extra", &col, s.out);
+                            putval(NEXT(s.in), "extra", 0, &s);
                     } while (--val);
-                if (info && col) {
+                if (info && s.col) {
                     putc('\n', s.out);
-                    col = 0;
+                    s.col = 0;
                 }
             }
             if (ret & 8) {              // file name
@@ -1334,11 +1432,11 @@ int main(int argc, char **argv) {
                 else
                     do {
                         if (info)
-                            putval(n, "name", &col, s.out);
+                            putval(n, "name", 0, &s);
                     } while (NEXT(s.in) != 0);
-                if (info && col) {
+                if (info && s.col) {
                     putc('\n', s.out);
-                    col = 0;
+                    s.col = 0;
                 }
             }
             if (ret & 16) {             // comment field
@@ -1349,11 +1447,11 @@ int main(int argc, char **argv) {
                 else
                     do {
                         if (info)
-                            putval(n, "comment", &col, s.out);
+                            putval(n, "comment", 0, &s);
                     } while (NEXT(s.in) != 0);
-                if (info && col) {
+                if (info && s.col) {
                     putc('\n', s.out);
-                    col = 0;
+                    s.col = 0;
                 }
             }
             if (ret & 2) {              // header crc
