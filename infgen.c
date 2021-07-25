@@ -4,8 +4,8 @@
  Version 2.5  2 Jul 2021
 
  Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
- simple binary encoded stream representing that input to stdout.  This is based
- on the puff.c code to decompress deflate streams.  Note that neither the zlib
+ simple binary encoded stream representing that input to stdout. This is based
+ on the puff.c code to decompress deflate streams. Note that neither the zlib
  nor the gzip trailer is checked against the uncompressed data (in fact the
  uncompressed data is never generated) -- only the fact that the trailer is
  present is checked.
@@ -15,23 +15,23 @@
 
  where foo.gz is a gzip file (it could have been a zlib or raw deflate stream
  as well), and foo.def is a defgen description of the file or stream, which is
- in a readable text format (unless -b is used).  The description includes the
- literal/length and distance code lengths for dynamic blocks.  The -d (dynamic)
+ in a readable text format (unless -b is used). The description includes the
+ literal/length and distance code lengths for dynamic blocks. The -d (dynamic)
  option generates directives to exactly reconstruct the dynamic block headers.
  With -d, the code lengths are still included, but now as comments instead of
- directives.  The -dd option is the same as -d, but with the bit sequences for
- each item shown as a comment after the item.  The -q (quiet) option supresses
- the dynamic block code lengths, whether as directives or as comments.  The -qq
+ directives. The -dd option is the same as -d, but with the bit sequences for
+ each item shown as a comment after the item. The -q (quiet) option supresses
+ the dynamic block code lengths, whether as directives or as comments. The -qq
  (really quiet) option supresses the output of all deflate stream descriptions,
- leaving only the header and trailer information.  However if -qq is used with
+ leaving only the header and trailer information. However if -qq is used with
  -s, the statistics information on the deflate stream is still included. The -i
  (info) option generates additional directives for gzip or zlib headers that
- permit their exact reconstruction.  The -s (statistics) option writes out
- comments with statistics for each deflate block and totals at the end.  The -r
+ permit their exact reconstruction. The -s (statistics) option writes out
+ comments with statistics for each deflate block and totals at the end. The -r
  (raw) option forces the interpretation of the input as a raw deflate stream,
  for those cases where the start of a raw stream happens to mimic a valid zlib
  header. The -b (binary) option writes a compact binary format instead of the
- defgen format.  In that case, any other options except -r are ignored.
+ defgen format. In that case, any other options except -r are ignored.
 
  Both the defgen and compact binary formats are described below.
  */
@@ -42,9 +42,9 @@
 
     Content:
 
-    The defgen format consists of lines of comments and directives.  Each line
+    The defgen format consists of lines of comments and directives. Each line
     is terminated by a single new line character '\n', though it may be written
-    as "\r\n" on systems with end-of-line conversions.  defgen accepts either.
+    as "\r\n" on systems with end-of-line conversions. defgen accepts either.
     The directives are used to construct (or reconstruct) a deflate stream.
     Each directive is a word at the start of the line, possibly followed by
     parameters.
@@ -52,65 +52,65 @@
     Comments:
 
     defgen lines whose first character is an exclamation mark ('!') are
-    comments, and are ignored by defgen.  Blank lines are also ignored.  All
-    other lines are directives.  If an exclamation mark appears after a
+    comments, and are ignored by defgen. Blank lines are also ignored. All
+    other lines are directives. If an exclamation mark appears after a
     directive and not following a single quote, then it and the characters
-    after it are a comment and are ignored.  infgen-generated informational
+    after it are a comment and are ignored. infgen-generated informational
     comments are described below.
 
     Headers and trailers:
 
-    The "gzip" directive writes a gzip header.  It is optionally preceded by
+    The "gzip" directive writes a gzip header. It is optionally preceded by
     directives bearing information to be contained in the gzip header: "name",
-    "comment", "extra", "text', "time", "xfl", "os", and "hcrc".  The "name",
+    "comment", "extra", "text', "time", "xfl", "os", and "hcrc". The "name",
     "comment", and "extra" directives use the same parameter format as "data"
     and "literal" described below, and may be repeated over multiple lines for
     long content. For "name" and "comment", the parameters do not include the
-    terminating zero.  For example:
+    terminating zero. For example:
 
     name 'linux-3.1.6.tar
 
     The "time", "os", and "xfl" (extra flags) directives each have a single
     numeric parameter. "os" and "xfl" have a parameter in the range of 0..255,
-    and "time" is in the the range of 0..2^32-1.  infgen adds a comment after
+    and "time" is in the the range of 0..2^32-1. infgen adds a comment after
     the time parameter with the local time zone interpretation of that value.
-    If "os" is not present, it is taken to be 3 (for Unix).  If "xfl" or "time"
-    is not present, the value is taken to be zero.  "text" and "hcrc" have no
-    parameter.  "text" sets the text flag.  hcrc signals a two-byte crc of the
+    If "os" is not present, it is taken to be 3 (for Unix). If "xfl" or "time"
+    is not present, the value is taken to be zero. "text" and "hcrc" have no
+    parameter. "text" sets the text flag. hcrc signals a two-byte crc of the
     header.
 
     The "crc" directive writes the CRC-32 of the uncompressed data in
-    little-endian order.  The "length" directive writes the length of the
-    uncompressed data, modulo 2^32, in little-endian order.  The combination of
-    a crc and a length in that order is the gzip trailer.  Either or both can
+    little-endian order. The "length" directive writes the length of the
+    uncompressed data, modulo 2^32, in little-endian order. The combination of
+    a crc and a length in that order is the gzip trailer. Either or both can
     optionally have a numeric parameter in the range 0..2^32-1 which would be
-    used in place of the value derived from the data.  infgen does not write
+    used in place of the value derived from the data. infgen does not write
     those parameters.
 
-    The "zlib" directive writes a zlib header.  The zlib directive has an
+    The "zlib" directive writes a zlib header. The zlib directive has an
     optional numeric parameter which is the log-base-2 of the window size, in
-    the range 8..15.  If there is no parameter, 15 is assumed.  zlib may be
+    the range 8..15. If there is no parameter, 15 is assumed. zlib may be
     preceded by the "level" directive, which has one parameter: the compression
-    level used when compressing in the range 0..3.  If level is not present, it
+    level used when compressing in the range 0..3. If level is not present, it
     is taken to be 2. zlib may also be preceded by a "dict" directive with the
     dictionary id as the numeric parameter, in the range 0..2^32-1.
 
     The "adler" directive writes the adler checksum of the uncompressed data in
-    big-endian order.  This is the zlib trailer.  adler may optionally have a
+    big-endian order. This is the zlib trailer. adler may optionally have a
     numeric parameter in the range 0..2^32-1 that is used in place of the
     actual adler checksum of the data.
 
     Deflate blocks:
 
     Deflate data between zlib or gzip headers and trailers, or raw deflate
-    data, consists of a series of deflate blocks.  They are begun by the block
+    data, consists of a series of deflate blocks. They are begun by the block
     type directives: "stored", "fixed", or "dynamic", and all end with "end"
     after the contents of the block. The last block has the directive "last" on
-    its own line before the block type directive.  The "stored" directive has
-    an optional parameter which is the data that fills in the dummy bits to get
-    to a byte boundary.  If the parameter is not present, those bits are
-    assumed to be zero.  An additional "block3" block type indicates the
-    illegal bit pattern for a fourth block type.
+    its own line before the block type directive. The "stored" directive has an
+    optional parameter which is the data that fills in the dummy bits to get to
+    a byte boundary. If the parameter is not present, those bits are assumed to
+    be zero. An additional "block3" block type indicates the illegal bit
+    pattern for a fourth block type.
 
     Block headers:
 
@@ -119,129 +119,151 @@
 
     A stored block header has as many bits as needed to go to the next byte
     boundary (see the "stored" parameter above), followed by four bytes of
-    block length information.  There is no directive for the length of the
+    block length information. There is no directive for the length of the
     stored block, as it is implied by the amount of data up to the next end
     directive.
 
     A dynamic block has a header that describes the Huffman codes used to
-    represent the literal/length and distance codes in the block.  That
-    description is itself compressed with a third code.  The dynamic header is
-    represented in one of two ways, or not at all.  If there is no description
+    represent the literal/length and distance codes in the block. That
+    description is itself compressed with a third code. The dynamic header is
+    represented in one of two ways, or not at all. If there is no description
     of the header, then the block data can be used to construct an optimal set
     of Huffman codes for the contained symbols, and an optimum way to encode
-    them in the header.  In that case, the data immediately follows the dynamic
+    them in the header. In that case, the data immediately follows the dynamic
     directive.
 
     The first explicit way to describe the header is to list the number of bits
-    in each literal/length and distance code.  This is done with the "litlen"
-    and "dist" directives.  Each directive has two numerical parameters: the
-    symbol index and the number of bits.  E.g. "litlen 40 9" or "dist 16 5". In
+    in each literal/length and distance code. This is done with the "litlen"
+    and "dist" directives. Each directive has two numerical parameters: the
+    symbol index and the number of bits. E.g. "litlen 40 9" or "dist 16 5". In
     this case, dynamic is followed by all of the litlen directives, which is
-    followed by all the dist directives.  The litlen symbol must be in the
-    range 0..285, and dist symbol must be in the range 0..29.  The number of
-    bits for both must be in the range 1..15.  Only the symbols coded are
-    listed.  The header description is complete upon encountering the first
-    "literal", "match", or "end".
+    followed by all the dist directives. The litlen symbol must be in the range
+    0..285, and dist symbol must be in the range 0..29. The number of bits for
+    both must be in the range 1..15. Only the symbols coded are listed. The
+    header description is complete upon encountering the first "literal",
+    "match", or "end".
 
-    The second, more proscriptive way to describe the header is to list the
-    actual contents of the header, from which the code lengths are derived.
-    This is done with the directives "count", "code", "lens", "repeat", and
-    "zeros".  count has two parameters: the number of length code lengths,
-    (257..286) and the number of distance code lengths (1..30).  code has two
-    numerical parameters, the symbol index (0..18) and the number of bits for
-    that symbol (1..7).  lens has any number of parameters in 0..15, where each
-    is the length of the corresponding literal/length or distance code.  A zero
-    length means that that symbol has no code and does not appear in the block.
-    repeat and zeros each have one parameter which is the number of times to
-    repeat a bit length.  repeat repeats the most recent length 3..6 times.
-    zeros repeats zeros 3..138 times.  dynamic is followed by all of the code
-    directives, and then by the len directives, with repeat and zeros
-    directives mixed in.  The header description is complete upon encountering
-    the first "literal", "match", or "end".
+    The second, more explicit way to describe the header is to list the actual
+    contents of the header, from which the code lengths are derived. This is
+    done with the directives "count", "code", "lens", "repeat", and "zeros".
+    count has two parameters: the number of length code lengths, (257..286) and
+    the number of distance code lengths (1..30). code has two numerical
+    parameters, the symbol index (0..18) and the number of bits for that symbol
+    (1..7). lens has any number of parameters in 0..15, where each is the
+    length of the corresponding literal/length or distance code. A zero length
+    means that that symbol has no code and does not appear in the block. repeat
+    and zeros each have one parameter which is the number of times to repeat a
+    bit length. repeat repeats the most recent length 3..6 times. zeros repeats
+    zeros 3..138 times. dynamic is followed by all of the code directives, and
+    then by the len directives, with repeat and zeros directives mixed in. The
+    header description is complete upon encountering the first "literal",
+    "match", or "end".
 
     Data:
 
-    All compressed data is represented using three directives: "data",
-    "literal", and "match".  "data" and "literal" have the same parameters and
-    both directly represent bytes of data.  "data" is used only in stored
-    blocks and literal is used only in fixed or dynamic blocks.  The parameters
-    of data and literal are a series of decimal numbers separated by spaces,
-    followed by a string of printable characters preceded by a single quote and
-    ended by the end of line.  A single quote may appear within the string
-    meaning a single quote in the data -- it does not end the string.  Either
-    the numbers or the string are optional.  Each decimal number is in the
-    range 0..255, and represents one byte of data.  The string can only contain
-    printable characters in the range 32..126.  All other byte values must be
-    represented as a decimal number.  match has two numerical parameters. The
-    first is the length of the match, in 3..258.  The second is the distance
-    back, in 1..32768.  The data ends with the "end" directive.
+    All compressed data is represented using the directives: "data", "literal",
+    and "match". "data" and "literal" have the same parameters and both
+    directly represent bytes of data. "data" may be used only in stored blocks
+    and literal may be used only in fixed or dynamic blocks. The parameters of
+    data and literal are a series of decimal numbers separated by spaces,
+    followed by a string of printable characters. Each decimal number is in the
+    range 0..255, and represents one byte of data. The string is a single
+    quote, followed by any number of characters in the range 32..126. A single
+    quote may appear within the string meaning a single quote in the data -- it
+    does not end the string. The string is ended by the end of line or any
+    other character not in the range 32..126. To append a comment to a line
+    with a string, a tab ('\t') can end the string, which may then be followed
+    by blank space and an exclamation mark for the comment. Either the numbers
+    or the string are optional.
 
-    After the last "end":
+    match has two numerical parameters. The first is the length of the match,
+    in 3..258. The second is the distance back, in 1..32768.
 
-    If the last block does not end at a bit boundary, the "bound" directive has
-    a single numeric parameter with the filler bits.  If bound is not present,
-    the bits up to the byte boundary are filled with zeros.
+    The data and the current block ends with the "end" directive.
+
+    The "end" of a block that was started with "last" marks the end of the
+    deflate stream. If that last block does not end at a bit boundary, the
+    "bound" directive has a single numeric parameter with the fill bits, where
+    those bits would be shifted up to fill in the last byte. If bound is not
+    present, the bits up to the byte boundary are filled with zeros. infgen
+    outputs the bound directive only when the fill bits are not all zeros.
 
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output.  E.g. "! infgen 2.5 output".
+    generated the defgen format output. E.g. "! infgen 2.5 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
 
-    If the -d option is used and the -n option is not used, then the litlen and
-    dist directives are written as comments.  E.g. "! litlen 40 9".  If -n is
-    used, then they are not written at all.
+    If the -d option is used, then the litlen and dist directives are written
+    as comments. E.g. "! litlen 40 9". If the -dd option is used, then each
+    deflate stream element, other than stored bytes, is appended to each
+    directive as a comment with a series of bit sequences shown as 0's and 1's.
+    In this case literals are always one per line. The bits in each sequence
+    are shown from most significant to least significant, as they appeared in
+    the compressed data. For directives with multiple components, e.g. Huffman
+    codes and extra bits, each component is shown as one bit sequence with the
+    components separated by spaces. The sequences are shown in reverse order.
+    In that way, if the spaces are removed, the bits are in the order they
+    are pulled from the compressed data, reading right to left. So in:
+
+        match 18 680            ! 10100111 1011 1 1101011
+
+    1101011 is the Huffman code and 1 is the extra bit for length 18. Then 1011
+    is the Huffman code and 10100111 are the extra bits for distance 680. If
+    these bits happened to start at a byte boundary, then the first byte would
+    be 11101011 or 0xeb, then second byte would be 01111011 or 0x7b. The third
+    byte would have the low nybble 1010, or 0xa.
 
     With the -s option, infgen will generate statistics comments, all of which
-    begin with "! stats ".  There are statistics for each deflate block, and
-    summary statistics after the last deflate block.  The statistics comments
+    begin with "! stats ". There are statistics for each deflate block, and
+    summary statistics after the last deflate block. The statistics comments
     are as follows:
 
     "! stats table n:m" gives the total number of bytes and bits in the dynamic
-    block header, not including the three block identifier bits.  For example,
+    block header, not including the three block identifier bits. For example,
     "! stats table 58:6" indicating 58 bytes and 6 bits = 470 bits.
 
     "! stats literals x.x bits each (n/m)" follows a fixed or dynamic block and
     gives the average number of bits per literal, the total number of bits for
     the literals in the block, and the number of literals in the block. For
-    example, "! stats literals 5.7 bits each (3793/664)".  If the block has no
+    example, "! stats literals 5.7 bits each (3793/664)". If the block has no
     literals, then "! stats literals none" will be written.
 
     "! stats matches x.x% (n x x.x)" follows a fixed or dynamic block and gives
     the percentage of the uncompressed bytes in the block that came from
     matches, the number of matches in the block, and the average match length.
-    For example, "! stats matches 82.6% (183 x 17.2)".  If the block has no
+    For example, "! stats matches 82.6% (183 x 17.2)". If the block has no
     matches, then "! stats matches none" will be written.
 
     "! stats stored length n" follows each stored block and gives the number of
     uncompressed bytes in the stored block, which does not include the stored
-    header.  For example: "! stats stored length 838" is a stored block with
+    header. For example: "! stats stored length 838" is a stored block with
     838 bytes.
 
     "! stats inout n:m (i) j k" follows any block and gives the total number of
     bytes and bits in the block, including the three-bit block identifier, the
     total number of symbols in the block (a literal and a match each count as
     one symbol), the number of uncompressed bytes generated by the block, and
-    the maximum reach of the distances to data before the block.  For example,
+    the maximum reach of the distances to data before the block. For example,
     "! stats inout 1889:4 (1906) 3810 -1718" is a block with 1889 bytes and 4
     bits, 1906 symbols, 3810 uncompressed bytes, and maximum reach of 1718
-    bytes before the block by a match in the block.  If the block does not
-    reach before itself, the reach value is zero.
+    bytes before the block by a match in the block. If the block does not reach
+    before itself, the reach value is zero.
 
-    After the last deflate block, total statistics are output.  They all begin
-    with "! stats total ".  The block input and output amounts are summed for
+    After the last deflate block, total statistics are output. They all begin
+    with "! stats total ". The block input and output amounts are summed for
     example as: "! stats total inout 93232233:0 (55120762) 454563840", with the
     same format as "! stats inout", except without the reach.
 
     "! stats total block average 34162.3 uncompressed" states for example that
-    the average number of uncompressed bytes per block was 34162.3.  Similarly
+    the average number of uncompressed bytes per block was 34162.3. Similarly
     "! stats total block average 4142.5 symbols" states that there were 4142.5
-    symbols on average per block.  "! stats total literals 6.9 bits each"
-    states that there were 6.9 bits used on average per literal.  Lastly the
-    matches are summed: "! stats total matches 95.2% (33314520 x 13.0)" with
-    the same format as "! stats matches".
+    symbols on average per block. "! stats total literals 6.9 bits each" states
+    that there were 6.9 bits used on average per literal. Lastly the matches
+    are summed: "! stats total matches 95.2% (33314520 x 13.0)" with the same
+    format as "! stats matches".
 
  */
 
@@ -265,8 +287,8 @@
 
     The binary dynamic block header description is terminated by a zero, and
     does not contain any zeros before that, in order to simplify decoding when
-    the header is not of interest.  The raw header is described, in order to
-    permit exact reconstruction if desired.  The header is this sequence of
+    the header is not of interest. The raw header is described, in order to
+    permit exact reconstruction if desired. The header is this sequence of
     bytes:
 
     nlen - 256  number of length codes minus 256 (1..30, meaning 257..286)
@@ -281,7 +303,7 @@
     0           a zero byte terminates the header description
 
     Literals are coded on average to 1.5 bytes, though often less since low
-    literals are more common.  Length-distance pairs are coded as three bytes.
+    literals are more common. Length-distance pairs are coded as three bytes.
     The coded form will be approximately 20% to 40% larger than the compressed
     form.
  */
@@ -435,7 +457,7 @@ local const char *inferr[] = {
 };
 #define IG_ERRS (sizeof(inferr)/sizeof(char *))
 
-// Print an error message and exit.  Return a value to use in an expression,
+// Print an error message and exit. Return a value to use in an expression,
 // even though the function will never return.
 local inline int bail(char *fmt, ...) {
     fflush(stdout);
@@ -460,7 +482,7 @@ local inline void warn(char *fmt, ...) {
     putc('\n', stderr);
 }
 
-// Maximums for allocations and loops.  It is not useful to change these --
+// Maximums for allocations and loops. It is not useful to change these --
 // they are fixed by the deflate format.
 #define MAXBITS 15              // maximum bits in a code
 #define MAXLCODES 286           // maximum number of literal/length codes
@@ -587,13 +609,13 @@ local inline void putval(int val, char *token, int seq, struct state *s) {
         putbits(s);
 }
 
-// Return need bits from the input stream.  This always leaves less than
-// eight bits in the buffer.  bits() works properly for need == 0.
+// Return need bits from the input stream. This always leaves less than
+// eight bits in the buffer. bits() works properly for need == 0.
 //
 // Format notes:
 //
 // - Bits are stored in bytes from the least significant bit to the most
-//   significant bit.  Therefore bits are dropped from the bottom of the bit
+//   significant bit. Therefore bits are dropped from the bottom of the bit
 //   buffer, using shift right, and new bytes are appended to the top of the
 //   bit buffer, using shift left.
 local inline int bits(struct state *s, int need) {
@@ -707,18 +729,18 @@ local int stored(struct state *s) {
     return IG_OK;
 }
 
-// Huffman code decoding tables.  count[1..MAXBITS] is the number of symbols of
+// Huffman code decoding tables. count[1..MAXBITS] is the number of symbols of
 // each length, which for a canonical code are stepped through in order.
 // symbol[] are the symbol values in canonical order, where the number of
-// entries is the sum of the counts in count[].  The decoding process can be
+// entries is the sum of the counts in count[]. The decoding process can be
 // seen in the function decode() below.
 struct huffman {
     short *count;       // number of symbols of each length
     short *symbol;      // canonically ordered symbols
 };
 
-// Decode a code from the stream s using huffman table h.  Return the symbol or
-// a negative value if there is an error.  If all of the lengths are zero, i.e.
+// Decode a code from the stream s using huffman table h. Return the symbol or
+// a negative value if there is an error. If all of the lengths are zero, i.e.
 // an empty code, or if the code is incomplete and an invalid code is received,
 // then IG_BAD_CODE_ERR is returned after reading MAXBITS bits.
 local inline int decode(struct state *s, struct huffman *h) {
@@ -774,23 +796,24 @@ local inline int decode(struct state *s, struct huffman *h) {
 
 // Given the list of code lengths length[0..n-1] representing a canonical
 // Huffman code for n symbols, construct the tables required to decode those
-// codes.  Those tables are the number of codes of each length, and the symbols
-// sorted by length, retaining their original order within each length.  The
+// codes. Those tables are the number of codes of each length, and the symbols
+// sorted by length, retaining their original order within each length. The
 // return value is zero for a complete code set, negative for an over-
-// subscribed code set, and positive for an incomplete code set.  The tables
-// can be used if the return value is zero or positive, but they cannot be used
-// if the return value is negative.  If the return value is zero, it is not
+// subscribed code set, and positive for an incomplete code set. The tables can
+// be used if the return value is zero or positive, but they cannot be used if
+// the return value is negative. If the return value is zero, it is not
 // possible for decode() using that table to return an error--any stream of
-// enough bits will resolve to a symbol.  If the return value is positive, then
+// enough bits will resolve to a symbol. If the return value is positive, then
 // it is possible for decode() using that table to return an error for received
 // codes past the end of the incomplete lengths.
 //
 // Not used by decode(), but used for error checking, h->count[0] is the number
-// of the n symbols not in the code.  So n - h->count[0] is the number of
-// codes.  This is useful for checking for incomplete codes that have more than
-// one symbol, which is an error in a dynamic block.
+// of the n symbols not in the code. So n - h->count[0] is the number of codes.
+// This is useful for checking for incomplete codes that have more than one
+// symbol, which is an error in a dynamic block.
 //
 // Assumption: for all i in 0..n-1, 0 <= length[i] <= MAXBITS
+//
 // This is assured by the construction of the length arrays in dynamic() and
 // fixed() and is not verified by construct().
 local int construct(struct huffman *h, short *length, int n) {
@@ -1133,10 +1156,10 @@ local int dynamic(struct state *s) {
     return codes(s, &lencode, &distcode);
 }
 
-// Inflate in to out, writing a defgen description of the input stream.  On
-// success, the return value of infgen() is IG_OK (0).  If there is an error in
+// Inflate in to out, writing a defgen description of the input stream. On
+// success, the return value of infgen() is IG_OK (0). If there is an error in
 // the source data, i.e. it is not in the deflate format, then a negative value
-// is returned.  If there is not enough input available, then IG_INCOMPLETE is
+// is returned. If there is not enough input available, then IG_INCOMPLETE is
 // returned.
 //
 // infgen()'s return codes are documented near the top of this source file.
