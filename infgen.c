@@ -539,11 +539,17 @@ struct state {
 #define SEQCOL 24       // column in which to start bit sequence comments
 
 // Write the bits that composed the last item, as a comment starting in column
-// SEQCOL.
+// SEQCOL. This assumes that tab stops are at multiples of eight.
 local inline void putbits(struct state *s) {
     if (s->draw > 1) {
-        // Go to column SEQCOL.
+        // Go to column SEQCOL using tabs.
         s->col = abs(s->col);
+        putc('\t', s->out);         // required to end literal string
+        s->col = (s->col & ~7) + 8;
+        while (s->col + 8 <= SEQCOL) {
+            putc('\t', s->out);
+            s->col += 8;
+        }
         while (s->col < SEQCOL) {
             putc(' ', s->out);
             s->col++;
