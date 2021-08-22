@@ -1100,7 +1100,7 @@ local int dynamic(struct state *s) {
             if (index + symbol > nlen + ndist)
                 return IG_REPEAT_TOO_MANY_ERR;  // too many lengths!
             if (s->binary)
-                putc(symbol + (len == -1 ? 14 : 18), s->out);
+                putc(symbol + (len == -1 ? 18 : 14), s->out);
             if (s->draw) {
                 if (s->col) {
                     putc('\n', s->out);
