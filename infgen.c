@@ -1,7 +1,7 @@
 /*
  infgen.c
  Copyright (C) 2005-2021 Mark Adler, all rights reserved.
- Version 2.5  2 Jul 2021
+ Version 2.6  22 Aug 2021
 
  Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
  simple binary encoded stream representing that input to stdout. This is based
@@ -191,7 +191,7 @@
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output. E.g. "! infgen 2.5 output".
+    generated the defgen format output. E.g. "! infgen 2.6 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
@@ -376,9 +376,10 @@
    2.4   2 Jan 2017  Fix erroneous declaration of i/o error on devices
    2.5  24 Jul 2021  Set window size from zlib header
                      Add -dd option to show the bit sequences for each item
+   2.6  22 Aug 2021  Fix bug in binary (-b) output for repeats and zeros
  */
 
-#define IG_VERSION "2.5"
+#define IG_VERSION "2.6"
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
