@@ -30,6 +30,12 @@ Use:
 
 to see the command options.
 
+Documentation
+-------------
+
+A list of all of the command options and detailed technical documentation can
+be found in the comments at the start of [infgen.c](infgen.c)
+
 License
 -------
 
