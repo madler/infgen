@@ -1448,8 +1448,9 @@ int main(int argc, char **argv) {
                 }
                 else
                     do {
+                        NEXT(s.in);
                         if (info)
-                            putval(NEXT(s.in), "extra", 0, &s);
+                            putval(n, "extra", 0, &s);
                     } while (--val);
                 if (info && s.col) {
                     putc('\n', s.out);
