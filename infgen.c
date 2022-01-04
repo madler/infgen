@@ -1331,6 +1331,10 @@ local void help(void) {
 #define NEXT(in) ((n = getc(in)) != EOF ? n : (s.col ? putc('\n', s.out) : 0, \
                   bail("unexpected end of input")))
 
+#define PUTNEXTVAL(token) (NEXT(s.in), \
+                           info && (putval(n, (token), 0, &s), 0), \
+                           n)
+
 // Read a gzip, zlib, or raw deflate stream from stdin or a provided path, and
 // write a defgen description of the stream to stdout.
 int main(int argc, char **argv) {
@@ -1446,15 +1450,22 @@ int main(int argc, char **argv) {
                     if (info)
                         fputs("extra '\n", s.out);
                 }
-                else
-                    do {
-                        NEXT(s.in);
-                        if (info)
-                            putval(n, "extra", 0, &s);
-                    } while (--val);
-                if (info && s.col) {
-                    putc('\n', s.out);
-                    s.col = 0;
+                else {
+                    unsigned xlen = 0;
+                    while (xlen < val) {
+                        PUTNEXTVAL("extra");
+                        PUTNEXTVAL("extra");
+                        unsigned slen = PUTNEXTVAL("extra");
+                        slen += PUTNEXTVAL("extra") << 8;
+                        xlen += 4 + slen;
+                        if (xlen > val)
+                            bail("extra field overflow (%d > %d)", xlen, val);
+                        while (slen--) PUTNEXTVAL("extra");
+                        if (info && s.col) {
+                            putc('\n', s.out);
+                            s.col = 0;
+                        }
+                    }
                 }
             }
             if (ret & 8) {              // file name
