@@ -1,7 +1,7 @@
 /*
  infgen.c
- Copyright (C) 2005-2021 Mark Adler, all rights reserved.
- Version 2.6  22 Aug 2021
+ Copyright (C) 2005-2022 Mark Adler, all rights reserved.
+ Version 2.7  7 Jan 2022
 
  Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
  simple binary encoded stream representing that input to stdout. This is based
@@ -191,7 +191,7 @@
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output. E.g. "! infgen 2.6 output".
+    generated the defgen format output. E.g. "! infgen 2.7 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
@@ -377,9 +377,10 @@
    2.5  24 Jul 2021  Set window size from zlib header
                      Add -dd option to show the bit sequences for each item
    2.6  22 Aug 2021  Fix bug in binary (-b) output for repeats and zeros
+   2.7   7 Jan 2022  Fix bit ordering in comments with the -dd option
  */
 
-#define IG_VERSION "2.6"
+#define IG_VERSION "2.7"
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
@@ -766,7 +767,11 @@ local inline int decode(struct state *s, struct huffman *h) {
             if (code < first + count) {
                 // This code is length len. Save bit sequence.
                 if (s->draw > 1 && s->seqs < MAXSEQS) {
-                    s->seq[s->seqs] = code;
+                    // Reverse the code for showing in the comment.
+                    int rev = 0;
+                    for (int i = 0; i < len; i++)
+                        rev = (rev << 1) | ((code >> i) & 1);
+                    s->seq[s->seqs] = rev;
                     s->len[s->seqs] = len;
                     s->seqs++;
                 }
