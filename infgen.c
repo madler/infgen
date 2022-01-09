@@ -1439,7 +1439,16 @@ int main(int argc, char **argv) {
             num += NEXT(s.in) << 24;
             if (info && num) {
                 time_t t = num;
-                fprintf(s.out, "time %lu ! UTC %s", num, asctime(gmtime(&t)));
+                s.col = fprintf(s.out, "time %lu", num);
+                seqtab(&s);
+                char at[64];
+                strncpy(at, asctime(gmtime(&t)), sizeof(at) - 1);
+                at[sizeof(at) - 1] = 0;
+                char *end = at + strlen(at) - 1;
+                if (*end == '\n')
+                    *end = 0;
+                fprintf(s.out, "! [UTC %s]\n", at);
+                s.col = 0;
             }
             val = NEXT(s.in);
             if (info && val)
