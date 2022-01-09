@@ -540,24 +540,27 @@ struct state {
 #define LINELEN 79      // target line length for data and literal commands
 #define SEQCOL 24       // column in which to start bit sequence comments
 
+// Go to column SEQCOL using tabs.
+local void seqtab(struct state *s) {
+    s->col = abs(s->col);
+    putc('\t', s->out);         // at least one tab to end literal string
+    s->col = (s->col & ~7) + 8;
+    while (s->col + 8 <= SEQCOL) {
+        putc('\t', s->out);
+        s->col += 8;
+    }
+    while (s->col < SEQCOL) {
+        putc(' ', s->out);
+        s->col++;
+    }
+}
+
 // Write the bits that composed the last item, as a comment starting in column
 // SEQCOL. This assumes that tab stops are at multiples of eight.
 local inline void putbits(struct state *s) {
     if (s->draw > 1) {
-        // Go to column SEQCOL using tabs.
-        s->col = abs(s->col);
-        putc('\t', s->out);         // required to end literal string
-        s->col = (s->col & ~7) + 8;
-        while (s->col + 8 <= SEQCOL) {
-            putc('\t', s->out);
-            s->col += 8;
-        }
-        while (s->col < SEQCOL) {
-            putc(' ', s->out);
-            s->col++;
-        }
-
-        // Start a comment.
+        // Start a comment at column SEQCOL.
+        seqtab(s);
         putc('!', s->out);
 
         // Write the sequences in reverse order, since they were read from
@@ -1451,12 +1454,66 @@ int main(int argc, char **argv) {
                     if (info)
                         fputs("extra '\n", s.out);
                 }
-                else
+                else {
+                    unsigned sub = 0;   // offset within sub-field
+                    char id[3] = {0};   // sub-field ID
+                    unsigned len = 0;   // sub-field content length
+                    int ok = 1;         // false if sub-fields invalid
                     do {
                         NEXT(s.in);
-                        if (info)
+                        if (info) {
                             putval(n, "extra", 0, &s);
+                            if (ok) {
+                                if (sub < 2)
+                                    // sub-field ID byte
+                                    id[sub] = n;
+                                else if (sub == 2)
+                                    // low byte of sub-field content length
+                                    len = n;
+                                else if (sub == 3) {
+                                    // high byte of sub-field content length
+                                    len += (unsigned)n << 8;
+                                    if (len < val) {
+                                        // sub-field fits in extra field
+                                        seqtab(&s);
+                                        fprintf(s.out, "! [id='%s' len=%u]\n",
+                                                id, len);
+                                        s.col = 0;
+                                        if (len == 0) {
+                                            sub = 0;
+                                            continue;
+                                        }
+                                    }
+                                    else
+                                        // sub-field doesn't fit -- invalid
+                                        ok = 0;
+                                }
+                                else {
+                                    // sub-field content
+                                    if (--len == 0) {
+                                        if (s.col) {
+                                            putc('\n', s.out);
+                                            s.col = 0;
+                                        }
+                                        sub = 0;
+                                        continue;
+                                    }
+                                }
+                                sub++;
+                            }
+                        }
                     } while (--val);
+                    if (info && (!ok || (sub > 0 && sub < 4) || len)) {
+                        // invalid sub-field structure
+                        if (s.col) {
+                            putc('\n', s.out);
+                            s.col = 0;
+                        }
+                        seqtab(&s);
+                        fputs("! [invalid sub-field structure]\n", s.out);
+                        s.col = 0;
+                    }
+                }
                 if (info && s.col) {
                     putc('\n', s.out);
                     s.col = 0;
