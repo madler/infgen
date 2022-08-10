@@ -33,5 +33,4 @@ to see the command options.
 License
 -------
 
-This code is copyrighted, all rights reserved. It can be used for personal
-enlightenment.
+This code is under the zlib license, found in the source file and LICENSE.

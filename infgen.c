@@ -1,8 +1,28 @@
 /*
- infgen.c
- Copyright (C) 2005-2022 Mark Adler, all rights reserved.
- Version 2.8  9 Jan 2022
+  infgen version 3.0, 10 August 2022
 
+  Copyright (C) 2005-2022 Mark Adler
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the author be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Mark Adler    madler@alumni.caltech.edu
+ */
+
+/*
  Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
  simple binary encoded stream representing that input to stdout. This is based
  on the puff.c code to decompress deflate streams. Note that neither the zlib
@@ -191,7 +211,7 @@
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output. E.g. "! infgen 2.8 output".
+    generated the defgen format output. E.g. "! infgen 3.0 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
@@ -381,9 +401,10 @@
    2.8   9 Jan 2022  Fix bug for gzip header extra field when -i not given
                      Add annotations in comments for gzip extra sub-fields
                      Discriminate non-binary comment with brackets
+   3.0  10 Aug 2022  Update to zlib license
  */
 
-#define IG_VERSION "2.8"
+#define IG_VERSION "3.0"
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
