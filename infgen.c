@@ -1,7 +1,7 @@
 /*
-  infgen version 3.0, 10 August 2022
+  infgen version 3.1, 19 July 2023
 
-  Copyright (C) 2005-2022 Mark Adler
+  Copyright (C) 2005-2023 Mark Adler
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the author be held liable for any damages
@@ -23,7 +23,7 @@
  */
 
 /*
- Read a zlib, gzip, or raw deflate stream and write a defgen-compatible or
+ Read a zlib, gzip, png, or raw deflate stream and write a defgen-compatible or
  simple binary encoded stream representing that input to stdout. This is based
  on the puff.c code to decompress deflate streams. Note that neither the zlib
  nor the gzip trailer is checked against the uncompressed data (in fact the
@@ -33,25 +33,35 @@
  Usage: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b] < foo.gz > foo.def
     or: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b] foo.gz > foo.def
 
- where foo.gz is a gzip file (it could have been a zlib or raw deflate stream
- as well), and foo.def is a defgen description of the file or stream, which is
- in a readable text format (unless -b is used). The description includes the
- literal/length and distance code lengths for dynamic blocks. The -d (dynamic)
- option generates directives to exactly reconstruct the dynamic block headers.
- With -d, the code lengths are still included, but now as comments instead of
- directives. The -dd option is the same as -d, but with the bit sequences for
- each item shown as a comment after the item. The -q (quiet) option supresses
- the dynamic block code lengths, whether as directives or as comments. The -qq
- (really quiet) option supresses the output of all deflate stream descriptions,
- leaving only the header and trailer information. However if -qq is used with
- -s, the statistics information on the deflate stream is still included. The -i
- (info) option generates additional directives for gzip or zlib headers that
- permit their exact reconstruction. The -s (statistics) option writes out
- comments with statistics for each deflate block and totals at the end. The -r
- (raw) option forces the interpretation of the input as a raw deflate stream,
- for those cases where the start of a raw stream happens to mimic a valid zlib
- header. The -b (binary) option writes a compact binary format instead of the
- defgen format. In that case, any other options except -r are ignored.
+ where foo.gz is a gzip file (it could have been a zlib, png, or raw deflate
+ stream as well), and foo.def is a defgen description of the file or stream,
+ which is in a readable text format (unless -b is used). For png files, the
+ output is a description of only the zlib stream extracted from the IDAT
+ blocks.
+
+ The description includes the literal/length and distance code lengths for
+ dynamic blocks. The -d (dynamic) option generates directives to exactly
+ reconstruct the dynamic block headers. With -d, the code lengths are still
+ included, but now as comments instead of directives. The -dd option is the
+ same as -d, but with the bit sequences for each item shown as a comment after
+ the item. The -s (statistics) option writes out comments with statistics for
+ each deflate block and totals at the end.
+
+ The -q (quiet) option supresses the dynamic block code lengths, whether as
+ directives or as comments. The -qq (really quiet) option supresses the output
+ of all deflate stream descriptions, leaving only the header and trailer
+ information. However if -qq is used with -s, the statistics information on the
+ deflate stream is still included.
+
+ The -i (info) option generates additional directives for gzip or zlib headers
+ that permit their exact reconstruction. For png files, -i will show chunk
+ types and lengths as comments, but not the contents, other than IDAT chunks.
+
+ The -r (raw) option forces the interpretation of the input as a raw deflate
+ stream, for those cases where the start of a raw stream happens to mimic one
+ of the other headers. The -b (binary) option writes a compact binary format
+ instead of the defgen format. In that case, all other options except -r are
+ ignored.
 
  Both the defgen and compact binary formats are described below.
  */
@@ -211,7 +221,7 @@
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output. E.g. "! infgen 3.0 output".
+    generated the defgen format output. E.g. "! infgen 3.1 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
@@ -402,15 +412,16 @@
                      Add annotations in comments for gzip extra sub-fields
                      Discriminate non-binary comment with brackets
    3.0  10 Aug 2022  Update to zlib license
+   3.1  19 Jul 2023  Detect and extract the zlib data from PNG files
  */
 
-#define IG_VERSION "3.0"
+#define IG_VERSION "3.1"
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
-                            // stdout, stderr, FILE, EOF
+                            // fread(), fseeko(), stdout, stderr, FILE, EOF
 #include <stdlib.h>         // exit()
-#include <string.h>         // strerror()
+#include <string.h>         // strerror(), memcmp()
 #include <errno.h>          // errno
 #include <time.h>           // time_t, gmtime(), asctime()
 #include <stdarg.h>         // va_list, va_start(), va_end()
@@ -522,6 +533,7 @@ local inline void warn(char *fmt, ...) {
 struct state {
     // Output state.
     int binary;                 // true to write compact binary format
+    int info;                   // true to write informational comments
     int data;                   // true to output literals and matches
     int tree;                   // true to output dynamic tree
     int draw;                   // true to output dynamic descriptor
@@ -534,6 +546,7 @@ struct state {
     // Input state.
     int bitcnt;                 // number of bits in bit buffer
     int bitbuf;                 // bit buffer
+    long chunk;                 // bytes left in this png chunk, or -1
     FILE *in;                   // input file
     int seqs;                   // number of bit sequences saved
     short seq[MAXSEQS];         // bits in each sequence
@@ -644,6 +657,69 @@ local inline void putval(int val, char *token, int seq, struct state *s) {
         putbits(s);
 }
 
+// Return the first byte of the next IDAT chunk, or EOF if there are no more
+// non-empty IDAT chunks. Set s->chunk to the number of remaining bytes in the
+// chunk.
+local int idat(struct state *s) {
+    for (;;) {
+        unsigned char head[13];     // preceding CRC + next length and type
+        head[12] = 0;
+        size_t got = fread(head, 1, 12, s->in);
+        if (got < 12) {
+            if (got != 4)
+                warn("invalid PNG structure");
+            s->chunk = 0;
+            return EOF;
+        }
+
+        // Get the chunk length.
+        s->chunk = head[7] + ((long)head[6] << 8) + ((long)head[5] << 16) +
+                   ((long)head[4] << 24);
+
+        if (s->info) {
+            // Show the chunk information.
+            if (s->col) {
+                putc('\n', s->out);
+                s->col = 0;
+            }
+            fprintf(s->out, "! PNG %s (%ld)\n", head + 8, s->chunk);
+        }
+
+        if (s->chunk == 0)
+            // Even if this is an IDAT, an empty one is useless. Get the next
+            // chunk.
+            continue;
+
+        if (memcmp(head + 8, "IDAT", 4) == 0) {
+            // Found an IDAT chunk -- return the first byte.
+            s->chunk--;
+            return getc(s->in);
+        }
+
+        // Skip over the non-IDAT chunk data. The CRC will remain to be read.
+        if (fseeko(s->in, (unsigned long)s->chunk, SEEK_CUR) == 0)
+            // The input is seekable.
+            continue;
+        unsigned char junk[8192];       // read buffer for a non-seekable skip
+        do {
+            long get = s->chunk > (long)sizeof(junk) ? sizeof(junk) : s->chunk;
+            long got = fread(junk, 1, get, s->in);
+            s->chunk -= got;
+            if (got != get) {
+                warn("invalid PNG structure");
+                return EOF;
+            }
+        } while (s->chunk);
+    }
+}
+
+// Return the next byte of the deflate data, or EOF on end of input. For png
+// files, this will read deflate data from each IDAT chunk until it is
+// exhausted, and then will look for the next IDAT chunk.
+local inline int get(struct state *s) {
+    return s->chunk == -1 || s->chunk-- ? getc(s->in) : idat(s);
+}
+
 // Return need bits from the input stream. This always leaves less than
 // eight bits in the buffer. bits() works properly for need == 0.
 //
@@ -657,7 +733,7 @@ local inline int bits(struct state *s, int need) {
     // Load at least need bits into val.
     long val = s->bitbuf;
     while (s->bitcnt < need) {
-        int next = getc(s->in);
+        int next = get(s);
         if (next == EOF)
             longjmp(s->env, 1);                 // out of input
         val |= (long)(next) << s->bitcnt;       // load eight bits
@@ -705,10 +781,10 @@ local int stored(struct state *s) {
     }
 
     // Get length and check against its one's complement.
-    unsigned len = getc(s->in);
-    len += (unsigned)(getc(s->in)) << 8;
-    unsigned cmp = getc(s->in);
-    int octet = getc(s->in);
+    unsigned len = get(s);
+    len += (unsigned)(get(s)) << 8;
+    unsigned cmp = get(s);
+    int octet = get(s);
     if (octet == EOF)
         return IG_INCOMPLETE;                   // not enough input
     cmp += (unsigned)octet << 8;
@@ -733,7 +809,7 @@ local int stored(struct state *s) {
 
     // Copy len bytes from in to out.
     while (len--) {
-        octet = getc(s->in);
+        octet = get(s);
         s->blockin += 8;
         if (octet == EOF)
             return IG_INCOMPLETE;               // not enough input
@@ -824,7 +900,7 @@ local inline int decode(struct state *s, struct huffman *h) {
         left = (MAXBITS+1) - len;
         if (left == 0)
             break;
-        bitbuf = getc(s->in);
+        bitbuf = get(s);
         if (bitbuf == EOF)
             longjmp(s->env, 1);         // out of input
         if (left > 8)
@@ -1368,16 +1444,17 @@ local void help(void) {
 int main(int argc, char **argv) {
     // Process command line options.
     char *path = NULL;
-    int info = 0;
     int head = 1;
     int wrap = 1;
     struct state s;
+    s.info = 0;
     s.binary = 0;
     s.data = 1;
     s.tree = 1;
     s.draw = 0;
     s.stats = 0;
     s.win = MAXDIST;
+    s.chunk = -1;
     while (--argc) {
         char *arg = *++argv;
         if (*arg++ != '-') {
@@ -1388,7 +1465,7 @@ int main(int argc, char **argv) {
         }
         while (*arg)
             switch (*arg++) {
-            case 'i':  info = 1;        break;
+            case 'i':  s.info = 1;      break;
             case 'b':  s.binary = 1;    break;
             case 'q':
                 if (s.tree)
@@ -1424,7 +1501,7 @@ int main(int argc, char **argv) {
     }
     s.out = stdout;
     if (s.binary) {
-        info = wrap = s.data = s.tree = s.draw = s.stats = 0;
+        wrap = s.info = s.data = s.tree = s.draw = s.stats = 0;
         SET_BINARY_MODE(s.out);
     }
     s.col = 0;
@@ -1455,13 +1532,13 @@ int main(int argc, char **argv) {
             ret = NEXT(s.in);
             if (ret & 0xe0)
                 bail("reserved gzip flags set (%02x)", ret);
-            if (info && (ret & 1))
+            if (s.info && (ret & 1))
                 fputs("text\n", s.out);
             unsigned long num = NEXT(s.in);
             num += NEXT(s.in) << 8;
             num += NEXT(s.in) << 16;
             num += NEXT(s.in) << 24;
-            if (info && num) {
+            if (s.info && num) {
                 time_t t = num;
                 s.col = fprintf(s.out, "time %lu", num);
                 seqtab(&s);
@@ -1475,16 +1552,16 @@ int main(int argc, char **argv) {
                 s.col = 0;
             }
             val = NEXT(s.in);
-            if (info && val)
+            if (s.info && val)
                 fprintf(s.out, "xfl %u\n", val);
             val = NEXT(s.in);
-            if (info && val != 3)
+            if (s.info && val != 3)
                 fprintf(s.out, "os %u\n", val);
             if (ret & 4) {              // extra field
                 val = NEXT(s.in);
                 val += NEXT(s.in) << 8;
                 if (val == 0) {
-                    if (info)
+                    if (s.info)
                         fputs("extra '\n", s.out);
                 }
                 else {
@@ -1494,7 +1571,7 @@ int main(int argc, char **argv) {
                     int ok = 1;         // false if sub-fields invalid
                     do {
                         NEXT(s.in);
-                        if (info) {
+                        if (s.info) {
                             putval(n, "extra", 0, &s);
                             if (ok) {
                                 if (sub < 2)
@@ -1536,7 +1613,7 @@ int main(int argc, char **argv) {
                             }
                         }
                     } while (--val);
-                    if (info && (!ok || (sub > 0 && sub < 4) || len)) {
+                    if (s.info && (!ok || (sub > 0 && sub < 4) || len)) {
                         // invalid sub-field structure
                         if (s.col) {
                             putc('\n', s.out);
@@ -1547,37 +1624,37 @@ int main(int argc, char **argv) {
                         s.col = 0;
                     }
                 }
-                if (info && s.col) {
+                if (s.info && s.col) {
                     putc('\n', s.out);
                     s.col = 0;
                 }
             }
             if (ret & 8) {              // file name
                 if (NEXT(s.in) == 0) {
-                    if (info)
+                    if (s.info)
                         fputs("name '\n", s.out);
                 }
                 else
                     do {
-                        if (info)
+                        if (s.info)
                             putval(n, "name", 0, &s);
                     } while (NEXT(s.in) != 0);
-                if (info && s.col) {
+                if (s.info && s.col) {
                     putc('\n', s.out);
                     s.col = 0;
                 }
             }
             if (ret & 16) {             // comment field
                 if (NEXT(s.in) == 0) {
-                    if (info)
+                    if (s.info)
                         fputs("comment '\n", s.out);
                 }
                 else
                     do {
-                        if (info)
+                        if (s.info)
                             putval(n, "comment", 0, &s);
                     } while (NEXT(s.in) != 0);
-                if (info && s.col) {
+                if (s.info && s.col) {
                     putc('\n', s.out);
                     s.col = 0;
                 }
@@ -1585,32 +1662,52 @@ int main(int argc, char **argv) {
             if (ret & 2) {              // header crc
                 NEXT(s.in);
                 NEXT(s.in);
-                if (info)
+                if (s.info)
                     fputs("hcrc\n", s.out);
             }
             trail = 8;
             if (wrap)
                 fputs("gzip\n", s.out);
         }
+        else if (head && n != EOF && val == (137 << 8) + 'P') {
+            // png file. Verify the remainder of "PNG".
+            if (NEXT(s.in) != 'N' || NEXT(s.in) != 'G')
+                bail("invalid PNG header");
+            if (s.info)
+                fputs("!\n", s.out);
+
+            // Now four bytes before the start of first png chunk. We leave
+            // those four bytes of header to be eaten as if they are the CRC of
+            // a preceding chunk.
+
+            // Get what should be a zlib header.
+            ret = idat(&s);
+            n = get(&s);
+            val = ((unsigned)ret << 8) + (unsigned)n;
+            if (n == EOF || val % 31 || (ret & 0xf) != 8 || (ret >> 4) > 7)
+                bail("invalid zlib header in IDAT");
+            goto zlib;
+        }
         else if (head && n != EOF && val % 31 == 0 && (ret & 0xf) == 8 &&
                  (ret >> 4) < 8) {
             // zlib header.
+          zlib:
             if (wrap)
                 fputs("!\n", s.out);
-            if (info && (val & 0xe0) != 0x80)   // compression level
+            if (s.info && (val & 0xe0) != 0x80)   // compression level
                 fprintf(s.out, "level %d\n", (val >> 6) & 3);
             if (val & 0x20) {                   // preset dictionary
                 unsigned long num = NEXT(s.in);
                 num = (num << 8) + NEXT(s.in);
                 num = (num << 8) + NEXT(s.in);
                 num = (num << 8) + NEXT(s.in);
-                if (info)
+                if (s.info)
                     fprintf(s.out, "dict %lu\n", num);
             }
             ret = (ret >> 4) + 8;
             s.win = 1U << ret;          // set window size from header
             trail = 4;
-            if (info && ret != 15)
+            if (s.info && ret != 15)
                 fprintf(s.out, "zlib %d\n", ret);
             else if (wrap)
                 fputs("zlib\n", s.out);
@@ -1636,7 +1733,7 @@ int main(int argc, char **argv) {
                     inferr[-1 - ret] : "unknown");
         else {
             n = 0;
-            while (n < trail && getc(s.in) != EOF)
+            while (n < trail && get(&s) != EOF)
                 n++;
             if (n < trail) {
                 warn("incomplete %s trailer", trail == 4 ? "zlib" : "gzip");
@@ -1650,6 +1747,14 @@ int main(int argc, char **argv) {
                 fputs("!\nadler\n", s.out);
             else if (trail == 8)
                 fputs("!\ncrc\nlength\n", s.out);
+        }
+
+        if (s.chunk != -1) {
+            // Parse remainder of PNG file.
+            fputs("!\n", s.out);
+            if (s.chunk || get(&s) != EOF)
+                warn("invalid PNG file structure");
+            break;
         }
     } while (ret == 0);
 
