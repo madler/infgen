@@ -1697,6 +1697,8 @@ int main(int argc, char **argv) {
             if (s.info && (val & 0xe0) != 0x80)   // compression level
                 fprintf(s.out, "level %d\n", (val >> 6) & 3);
             if (val & 0x20) {                   // preset dictionary
+                if (s.chunk != -1)
+                    bail("preset dictionary not valid in PNG");
                 unsigned long num = NEXT(s.in);
                 num = (num << 8) + NEXT(s.in);
                 num = (num << 8) + NEXT(s.in);
