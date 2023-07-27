@@ -1,5 +1,5 @@
 /*
-  infgen version 3.1, 19 July 2023
+  infgen version 3.2, 26 July 2023
 
   Copyright (C) 2005-2023 Mark Adler
 
@@ -413,13 +413,14 @@
                      Discriminate non-binary comment with brackets
    3.0  10 Aug 2022  Update to zlib license
    3.1  19 Jul 2023  Detect and extract the zlib data from PNG files
+   3.2  26 Jul 2023  Check PNG chunk CRCs
  */
 
-#define IG_VERSION "3.1"
+#define IG_VERSION "3.2"
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
-                            // fread(), fseeko(), stdout, stderr, FILE, EOF
+                            // fread(), stdout, stderr, FILE, EOF
 #include <stdlib.h>         // exit()
 #include <string.h>         // strerror(), memcmp()
 #include <errno.h>          // errno
@@ -428,6 +429,7 @@
 #include <inttypes.h>       // intmax_t, PRIuMAX
 #include <setjmp.h>         // jmp_buf, setjmp(), longjmp()
 #include <unistd.h>         // isatty()
+#include "zlib.h"           // crc32(), get_crc_table()
 
 #if defined(MSDOS) || defined(OS2) || defined(_WIN32) || defined(__CYGWIN__)
 #  include <fcntl.h>
@@ -547,6 +549,8 @@ struct state {
     int bitcnt;                 // number of bits in bit buffer
     int bitbuf;                 // bit buffer
     long chunk;                 // bytes left in this png chunk, or -1
+    uint32_t crc;               // running ~CRC of current chunk data
+    z_crc_t const *table;       // CRC table for one-byte updates
     FILE *in;                   // input file
     int seqs;                   // number of bit sequences saved
     short seq[MAXSEQS];         // bits in each sequence
@@ -665,6 +669,14 @@ local int idat(struct state *s) {
         unsigned char head[13];     // preceding CRC + next length and type
         head[12] = 0;
         size_t got = fread(head, 1, 12, s->in);
+        if (got >= 4) {
+            // check CRC
+            uint32_t crc = head[3] + ((uint32_t)head[2] << 8) +
+                           ((uint32_t)head[1] << 16) +
+                           ((uint32_t)head[0] << 24);
+            if (crc != ~s->crc)
+                warn("corrupt PNG");
+        }
         if (got < 12) {
             if (got != 4)
                 warn("invalid PNG structure");
@@ -685,6 +697,9 @@ local int idat(struct state *s) {
             fprintf(s->out, "! PNG %s (%ld)\n", head + 8, s->chunk);
         }
 
+        // Initialize the CRC with the chunk type.
+        s->crc = ~crc32(crc32(0, Z_NULL, 0), head + 8, 4);
+
         if (s->chunk == 0)
             // Even if this is an IDAT, an empty one is useless. Get the next
             // chunk.
@@ -696,14 +711,13 @@ local int idat(struct state *s) {
             return getc(s->in);
         }
 
-        // Skip over the non-IDAT chunk data. The CRC will remain to be read.
-        if (fseeko(s->in, (unsigned long)s->chunk, SEEK_CUR) == 0)
-            // The input is seekable.
-            continue;
+        // Skip over the non-IDAT chunk data, updating the CRC. The chunk CRC
+        // will remain to be read.
         unsigned char junk[8192];       // read buffer for a non-seekable skip
         do {
             long get = s->chunk > (long)sizeof(junk) ? sizeof(junk) : s->chunk;
             long got = fread(junk, 1, get, s->in);
+            s->crc = ~crc32(~s->crc, junk, got);
             s->chunk -= got;
             if (got != get) {
                 warn("invalid PNG structure");
@@ -715,9 +729,16 @@ local int idat(struct state *s) {
 
 // Return the next byte of the deflate data, or EOF on end of input. For png
 // files, this will read deflate data from each IDAT chunk until it is
-// exhausted, and then will look for the next IDAT chunk.
+// exhausted, and then will look for the next IDAT chunk. The chunk CRC is
+// updated.
 local inline int get(struct state *s) {
-    return s->chunk == -1 || s->chunk-- ? getc(s->in) : idat(s);
+    if (s->chunk == -1)
+        return getc(s->in);
+    int ch = s->chunk-- ? getc(s->in) : idat(s);
+    if (ch == EOF)
+        return ch;
+    s->crc = (s->crc >> 8) ^ s->table[(s->crc ^ ch) & 0xff];
+    return ch;
 }
 
 // Return need bits from the input stream. This always leaves less than
@@ -1676,12 +1697,15 @@ int main(int argc, char **argv) {
             if (s.info)
                 fputs("!\n", s.out);
 
-            // Now four bytes before the start of first png chunk. We leave
-            // those four bytes of header to be eaten as if they are the CRC of
-            // a preceding chunk.
+            // Now we are four bytes before the start of first png chunk. We
+            // set those four bytes of header to be checked as if they are the
+            // CRC of a preceding chunk.
+            s.crc = ~0x0d0a1a0a;
+            s.table = get_crc_table();
 
             // Get what should be a zlib header.
-            ret = idat(&s);
+            s.chunk = 0;
+            ret = get(&s);
             n = get(&s);
             val = ((unsigned)ret << 8) + (unsigned)n;
             if (n == EOF || val % 31 || (ret & 0xf) != 8 || (ret >> 4) > 7)
