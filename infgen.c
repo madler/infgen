@@ -1185,8 +1185,11 @@ local int dynamic(struct state *s) {
         lengths[order[index]] = len;
         if (s->binary)
             putc(len + 1, s->out);
-        if (s->draw && len) {
-            s->col = fprintf(s->out, "code %d %d", order[index], len);
+        if (s->draw) {
+            if (len)
+                s->col = fprintf(s->out, "code %d %d", order[index], len);
+            else
+                s->col = fprintf(s->out, "code %d missing", order[index]);
             putbits(s);
         }
     }
