@@ -1,7 +1,7 @@
 /*
-  infgen version 3.2, 26 July 2023
+  infgen version 3.3, 20 June 2024
 
-  Copyright (C) 2005-2023 Mark Adler
+  Copyright (C) 2005-2024 Mark Adler
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the author be held liable for any damages
@@ -30,8 +30,8 @@
  uncompressed data is never generated) -- only the fact that the trailer is
  present is checked.
 
- Usage: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b] < foo.gz > foo.def
-    or: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b] foo.gz > foo.def
+ Usage: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b[b]] < foo.gz > foo.def
+    or: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b[b]] foo.gz > foo.def
 
  where foo.gz is a gzip file (it could have been a zlib, png, or raw deflate
  stream as well), and foo.def is a defgen description of the file or stream,
@@ -61,7 +61,7 @@
  stream, for those cases where the start of a raw stream happens to mimic one
  of the other headers. The -b (binary) option writes a compact binary format
  instead of the defgen format. In that case, all other options except -r are
- ignored.
+ ignored. The -bb option includes compressed-data bit counts in the output.
 
  Both the defgen and compact binary formats are described below.
  */
@@ -336,6 +336,30 @@
     literals are more common. Length-distance pairs are coded as three bytes.
     The coded form will be approximately 20% to 40% larger than the compressed
     form.
+
+    --- Extensions to -b format when the -bb option is given ---
+
+    The leftover bits after a stored block header or the end of the stream have
+    a 1 bit above them so that the number of leftover bits can be determined.
+    For example 0x80 means seven 0 bits, and 0x01 means no leftover bits.
+
+    A variable-length unsigned integer is represented in little-endian order
+    with seven bits in each byte and the high bit set, except for the last byte
+    which has the high bit clear. The last byte cannot be zero unless the value
+    being represented is 0. If the value is 1 or more, then there are no zero
+    bytes in the representation. The bit counts below are written as variable-
+    length unsigned integers with values assured to be greater than zero.
+
+    0xff:        prefix byte, followed by ...
+     9:          total number of bits in the preceding block - 9
+                 number of bits in the header - 2
+                 number of bits in the literal codes + 1 (0 + 1 for stored)
+                 number of bits in the match codes + 1 (0 + 1 for stored)
+                 a terminating 0 byte
+     10..0x3f:   reserved (not used) -- assume these are followed by a zero-
+                 terminated sequence of bytes, like 4, 5, and 9 above (this
+                 permits compatible future use)
+     0x40..0x7e: reserved (not used) -- assume these are followed by nothing
  */
 
 /* Version history:
@@ -414,6 +438,7 @@
    3.0  10 Aug 2022  Update to zlib license
    3.1  19 Jul 2023  Detect and extract the zlib data from PNG files
    3.2  26 Jul 2023  Check PNG chunk CRCs
+   3.3  20 Jun 2024  Add -bb option to include bit counts in binary output
  */
 
 #define IG_VERSION "3.2"
@@ -558,12 +583,14 @@ struct state {
 
     // Current block statistics.
     unsigned reach;             // maximum distance before current block
+    unsigned headlen;           // bits in block header
     uintmax_t blockin;          // bits in for current block
     uintmax_t blockout;         // bytes out for current block
     uintmax_t symbols;          // number of symbols (or stored bytes)
     uintmax_t matches;          // number of matches
     uintmax_t matchlen;         // total length of matches
     uintmax_t litbits;          // number of bits in literals
+    uintmax_t matbits;          // number of bits in matches
 
     // Total statistics.
     uintmax_t blocks;           // total number of deflate blocks
@@ -802,16 +829,10 @@ local int stored(struct state *s) {
     }
 
     // Get length and check against its one's complement.
-    unsigned len = get(s);
-    len += (unsigned)(get(s)) << 8;
-    unsigned cmp = get(s);
-    int octet = get(s);
-    if (octet == EOF)
-        return IG_INCOMPLETE;                   // not enough input
-    cmp += (unsigned)octet << 8;
+    unsigned len = bits(s, 16);
+    unsigned cmp = bits(s, 16);
     if (len != (~cmp & 0xffff))
         return IG_STORED_LENGTH_ERR;            // didn't match complement!
-    s->blockin += 32;
     if (s->stats) {
         if (s->col) {
             putc('\n', s->out);
@@ -829,8 +850,9 @@ local int stored(struct state *s) {
     }
 
     // Copy len bytes from in to out.
+    s->headlen = s->blockin;
     while (len--) {
-        octet = get(s);
+        int octet = get(s);
         s->blockin += 8;
         if (octet == EOF)
             return IG_INCOMPLETE;               // not enough input
@@ -1077,6 +1099,7 @@ local int codes(struct state *s,
                 else
                     s->max += len;
             }
+            s->matbits += s->blockin - beg;
         }
     } while (symbol != 256);            // end of block symbol
     s->symbols--;
@@ -1150,6 +1173,7 @@ local int fixed(struct state *s) {
     }
 
     // Decode data until end-of-block code.
+    s->headlen = s->blockin;
     return codes(s, &lencode, &distcode);
 }
 
@@ -1289,7 +1313,17 @@ local int dynamic(struct state *s) {
         return IG_DIST_CODE_UNDER_ERR;      // incomplete with one code ok
 
     // Decode data until end-of-block code.
+    s->headlen = s->blockin;
     return codes(s, &lencode, &distcode);
+}
+
+// Write val as a variable-length integer to out.
+local void putvar(uintmax_t u, FILE *out) {
+    while (u > 0x7f) {
+        putc((u & 0x7f) | 0x80, out);
+        u >>= 7;
+    }
+    putc(u, out);
 }
 
 // Inflate in to out, writing a defgen description of the input stream. On
@@ -1335,6 +1369,7 @@ local int infgen(struct state *s) {
             s->matches = 0;
             s->matchlen = 0;
             s->litbits = 0;
+            s->matbits = 0;
             last = bits(s, 1);          // one if last block
             if (s->data && last) {
                 fputs("last", s->out);
@@ -1349,7 +1384,8 @@ local int infgen(struct state *s) {
             switch (type) {
             case 0:
                 if (s->binary)
-                    putc(s->bitbuf, s->out);
+                    putc(s->bitbuf + (s->binary > 1 ? 1 << s->bitcnt : 0),
+                         s->out);
                 if (s->data) {
                     fputs("stored", s->out);
                     s->col = 6;
@@ -1385,6 +1421,15 @@ local int infgen(struct state *s) {
             }
             if (err != IG_OK)
                 break;                  // return with error
+            if (s->binary > 1) {
+                putc(0xff, s->out);
+                putc(9, s->out);
+                putvar(s->blockin - 9, s->out);
+                putvar(s->headlen - 2, s->out);
+                putvar(s->litbits + 1, s->out);
+                putvar(s->matbits + 1, s->out);
+                putc(0, s->out);
+            }
         } while (!last);
     }
 
@@ -1397,7 +1442,7 @@ local int infgen(struct state *s) {
     if (s->binary) {
         putc(0xff, s->out);
         putc(8, s->out);
-        putc(s->bitbuf, s->out);
+        putc(s->bitbuf + (s->binary > 1 ? 1 << s->bitcnt : 0), s->out);
     }
     if (s->data && s->bitcnt && s->bitbuf)
         s->col += fprintf(s->out, "bound %d", s->bitbuf);
@@ -1487,7 +1532,7 @@ int main(int argc, char **argv) {
         while (*arg)
             switch (*arg++) {
             case 'i':  s.info = 1;      break;
-            case 'b':  s.binary = 1;    break;
+            case 'b':  s.binary++;      break;
             case 'q':
                 if (s.tree)
                     s.tree = 0;
