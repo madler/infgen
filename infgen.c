@@ -441,7 +441,7 @@
    3.3  20 Jun 2024  Add -bb option to include bit counts in binary output
  */
 
-#define IG_VERSION "3.2"
+#define IG_VERSION "3.3"
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
