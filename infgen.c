@@ -1486,8 +1486,8 @@ local void help(void) {
           "infgen " IG_VERSION "\n"
           "Usage:\n"
           "\n"
-          "  infgen [-d[d]q[q]isrb] input_path > output_path\n"
-          "  infgen [-d[d]q[q]isrb] < input_path > output_path\n"
+          "  infgen [-d[d]q[q]isrb[b]] input_path > output_path\n"
+          "  infgen [-d[d]q[q]isrb[b]] < input_path > output_path\n"
           "\n"
           "    -d   Write raw dynamic header (code lengths in comments)\n"
           "    -dd  Also show the bits for each element displayed\n"
@@ -1497,6 +1497,7 @@ local void help(void) {
           "    -s   Include deflate block statistics (as comments)\n"
           "    -r   Assume raw deflate data -- do not look for headers\n"
           "    -b   Write compact binary format (only -r honored)\n"
+          "    -bb  Write compact binary format with bit counts\n"
           "\n",
           stderr);
 }
