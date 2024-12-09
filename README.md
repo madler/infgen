@@ -15,7 +15,8 @@ Installation
 ------------
 
 Simply compile `infgen.c`, and provide the compressed data to stdin. The
-disassembled output will be written to stdout.
+disassembled output will be written to stdout. The zlib library needs to be
+linked for CRC-32 functionality that is used on PNG input.
 
 Test
 ----
