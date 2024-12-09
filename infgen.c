@@ -445,9 +445,9 @@
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
-                            // fread(), stdout, stderr, FILE, EOF
+                            // fread(), fwrite(), stdout, stderr, FILE, EOF
 #include <stdlib.h>         // exit()
-#include <string.h>         // strerror(), memcmp()
+#include <string.h>         // strerror(), memcmp(), memset()
 #include <errno.h>          // errno
 #include <time.h>           // time_t, gmtime(), asctime()
 #include <stdarg.h>         // va_list, va_start(), va_end()
@@ -603,6 +603,12 @@ struct state {
 
     // Input limit error return state for bits() and decode().
     jmp_buf env;
+
+    // Uncompressed data, if needed.
+    int reap;                   // true to collect uncompressed data
+    FILE *put;                  // file to write uncompressed data to, or NULL
+    size_t next;                // next index in window[]
+    uint8_t window[MAXDIST];    // sliding uncompressed data window
 };
 
 #define LINELEN 79      // target line length for data and literal commands
@@ -693,7 +699,7 @@ local inline void putval(int val, char *token, int seq, struct state *s) {
 // chunk.
 local int idat(struct state *s) {
     for (;;) {
-        unsigned char head[13];     // preceding CRC + next length and type
+        uint8_t head[13];           // preceding CRC + next length and type
         head[12] = 0;
         size_t got = fread(head, 1, 12, s->in);
         if (got >= 4) {
@@ -740,7 +746,7 @@ local int idat(struct state *s) {
 
         // Skip over the non-IDAT chunk data, updating the CRC. The chunk CRC
         // will remain to be read.
-        unsigned char junk[8192];       // read buffer for a non-seekable skip
+        uint8_t junk[8192];             // read buffer for a non-seekable skip
         do {
             long get = s->chunk > (long)sizeof(junk) ? sizeof(junk) : s->chunk;
             long got = fread(junk, 1, get, s->in);
@@ -856,6 +862,12 @@ local int stored(struct state *s) {
         s->blockin += 8;
         if (octet == EOF)
             return IG_INCOMPLETE;               // not enough input
+        if (s->reap) {
+            s->window[s->next++] = octet;
+            s->next &= MAXDIST-1;
+            if (s->next == 0 && s->put != NULL)
+                fwrite(s->window, 1, MAXDIST, s->put);
+        }
         if (s->binary) {
             if (octet < 0x7f)
                 putc(octet + 0x80, s->out);
@@ -1037,6 +1049,12 @@ local int codes(struct state *s,
             return symbol;              // invalid symbol
         if (symbol < 256) {             // literal: symbol is the byte
             // Write out the literal.
+            if (s->reap) {
+                s->window[s->next++] = symbol;
+                s->next &= MAXDIST-1;
+                if (s->next == 0 && s->put != NULL)
+                    fwrite(s->window, 1, MAXDIST, s->put);
+            }
             if (s->binary) {
                 if (symbol < 0x7f)
                     putc(symbol + 0x80, s->out);
@@ -1066,6 +1084,16 @@ local int codes(struct state *s,
             unsigned dist = dists[symbol] + bits(s, dext[symbol]);
 
             // Check distance and write match.
+            if (s->reap) {
+                int n = len;
+                do {
+                    s->window[s->next] = s->window[(s->next - dist) &
+                                                   (MAXDIST-1)];
+                    s->next = (s->next + 1) & (MAXDIST-1);
+                    if (s->next == 0 && s->put != NULL)
+                        fwrite(s->window, 1, MAXDIST, s->put);
+                } while (--n);
+            }
             if (s->binary) {
                 putc((dist -1) >> 8, s->out);
                 putc(dist - 1, s->out);
@@ -1343,6 +1371,12 @@ local int infgen(struct state *s) {
     s->col = 0;
     s->max = 0;
 
+    // Initialize sliding window.
+    if (s->reap) {
+        s->next = 0;
+        memset(s->window, 0, MAXDIST);  // copy zeros for distance too far back
+    }
+
     // Initialize statistics.
     s->blocks = 0;
     s->inbits = 0;
@@ -1431,6 +1465,12 @@ local int infgen(struct state *s) {
                 putc(0, s->out);
             }
         } while (!last);
+    }
+
+    // Write out what's left in the window.
+    if (s->reap && s->put != NULL) {
+        fwrite(s->window, 1, s->next, s->put);
+        s->next = 0;
     }
 
     // Finish off dangling literal line.
@@ -1572,6 +1612,9 @@ int main(int argc, char **argv) {
         SET_BINARY_MODE(s.out);
     }
     s.col = 0;
+    s.put = NULL;               // decompressed output for verification
+    // s.put = fopen("infgen.dat", "wb");
+    s.reap = s.put != NULL;
 
     // Say what wrote this.
     if (wrap)
@@ -1831,6 +1874,8 @@ int main(int argc, char **argv) {
     } while (ret == 0);
 
     // Done.
+    if (s.put != NULL)
+        fclose(s.put);
     fflush(s.out);
     if (path != NULL)
         fclose(s.in);
