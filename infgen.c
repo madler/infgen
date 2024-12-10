@@ -30,8 +30,8 @@
  uncompressed data is never generated) -- only the fact that the trailer is
  present is checked.
 
- Usage: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b[b]] < foo.gz > foo.def
-    or: infgen [-d[d]] [-q[q]] [-i] [-s] [-r] [-b[b]] foo.gz > foo.def
+ Usage: infgen [-d[d]] [-m] [-q[q]] [-i] [-s] [-r] [-b[b]] < foo.gz > foo.def
+    or: infgen [-d[d]] [-m] [-q[q]] [-i] [-s] [-r] [-b[b]] foo.gz > foo.def
 
  where foo.gz is a gzip file (it could have been a zlib, png, or raw deflate
  stream as well), and foo.def is a defgen description of the file or stream,
@@ -46,6 +46,8 @@
  same as -d, but with the bit sequences for each item shown as a comment after
  the item. The -s (statistics) option writes out comments with statistics for
  each deflate block and totals at the end.
+
+ The -m (match) option shows the copied data after each match.
 
  The -q (quiet) option supresses the dynamic block code lengths, whether as
  directives or as comments. The -qq (really quiet) option supresses the output
@@ -192,19 +194,22 @@
     Data:
 
     All compressed data is represented using the directives: "data", "literal",
-    and "match". "data" and "literal" have the same parameters and both
-    directly represent bytes of data. "data" may be used only in stored blocks
-    and literal may be used only in fixed or dynamic blocks. The parameters of
-    data and literal are a series of decimal numbers separated by spaces,
-    followed by a string of printable characters. Each decimal number is in the
-    range 0..255, and represents one byte of data. The string is a single
-    quote, followed by any number of characters in the range 32..126. A single
-    quote may appear within the string meaning a single quote in the data -- it
-    does not end the string. The string is ended by the end of line or any
-    other character not in the range 32..126. To append a comment to a line
-    with a string, a tab ('\t') can end the string, which may then be followed
-    by blank space and an exclamation mark for the comment. Either the numbers
-    or the string are optional.
+    and "match", and optionally "copy". "data", "literal", and "copy" have the
+    same parameters, directly representing bytes of data. "data" may be used
+    only in stored blocks and "literal" may be used only in fixed or dynamic
+    blocks. If the -m option is given, then "copy" shows the data copied after
+    each match. "copy" shows redundant information, as it can be derived from
+    the previously decompressed data and each match length and distance. The
+    parameters of data, literal, and copy are a series of decimal numbers
+    separated by spaces, followed by a string of printable characters. Each
+    decimal number is in the range 0..255, and represents one byte of data. The
+    string is a single quote, followed by any number of characters in the range
+    32..126. A single quote may appear within the string meaning a single quote
+    in the data -- it does not end the string. The string is ended by the end
+    of line or any other character not in the range 32..126. To append a
+    comment to a line with a string, a tab ('\t') can end the string, which may
+    then be followed by blank space and an exclamation mark for the comment.
+    Either the numbers or the string are optional.
 
     match has two numerical parameters. The first is the length of the match,
     in 3..258. The second is the distance back, in 1..32768.
@@ -564,6 +569,7 @@ struct state {
     int data;                   // true to output literals and matches
     int tree;                   // true to output dynamic tree
     int draw;                   // true to output dynamic descriptor
+    int copy;                   // true to output match data
     int stats;                  // true to output statistics
     int col;                    // state within data line
     unsigned max;               // maximum distance (bytes so far)
@@ -1106,6 +1112,19 @@ local int codes(struct state *s,
                 }
                 s->col = fprintf(s->out, "match %d %u", len, dist);
                 putbits(s);
+                if (s->copy) {
+                    // Show the data copied by the match.
+                    size_t i = (s->next - dist) & (MAXDIST-1);
+                    int n = len;
+                    do {
+                        putval(s->window[i++], "copy", 0, s);
+                        i &= MAXDIST-1;
+                    } while (--n);
+                    if (s->col) {
+                        putc('\n', s->out);
+                        s->col = 0;
+                    }
+                }
             }
             if (dist > s->max) {
                 warn("distance too far back (%u/%u)", dist, s->max);
@@ -1526,11 +1545,12 @@ local void help(void) {
           "infgen " IG_VERSION "\n"
           "Usage:\n"
           "\n"
-          "  infgen [-d[d]q[q]isrb[b]] input_path > output_path\n"
-          "  infgen [-d[d]q[q]isrb[b]] < input_path > output_path\n"
+          "  infgen [-d[d]mq[q]isrb[b]] input_path > output_path\n"
+          "  infgen [-d[d]mq[q]isrb[b]] < input_path > output_path\n"
           "\n"
           "    -d   Write raw dynamic header (code lengths in comments)\n"
           "    -dd  Also show the bits for each element displayed\n"
+          "    -m   Show copied data after each match\n"
           "    -q   Do not write dynamic code lengths (comments or not)\n"
           "    -qq  Do not write deflate stream description at all\n"
           "    -i   Include detailed gzip / zlib header descriptions\n"
@@ -1557,6 +1577,7 @@ int main(int argc, char **argv) {
     s.info = 0;
     s.binary = 0;
     s.data = 1;
+    s.copy = 0;
     s.tree = 1;
     s.draw = 0;
     s.stats = 0;
@@ -1581,6 +1602,7 @@ int main(int argc, char **argv) {
                     s.data = 0;
                 break;
             case 'd':  s.draw++;        break;
+            case 'm':  s.copy = 1;      break;
             case 's':  s.stats = 1;     break;
             case 'r':  head = 0;        break;
             case 'h':  help();          return 0;
@@ -1614,7 +1636,7 @@ int main(int argc, char **argv) {
     s.col = 0;
     s.put = NULL;               // decompressed output for verification
     // s.put = fopen("infgen.dat", "wb");
-    s.reap = s.put != NULL;
+    s.reap = s.copy || s.put != NULL;
 
     // Say what wrote this.
     if (wrap)
