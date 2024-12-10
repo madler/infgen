@@ -1103,7 +1103,7 @@ local int codes(struct state *s,
                 } while (--n);
             }
             if (s->binary) {
-                putc((dist -1) >> 8, s->out);
+                putc((dist - 1) >> 8, s->out);
                 putc(dist - 1, s->out);
                 putc(len - 3, s->out);
             }
@@ -1116,12 +1116,11 @@ local int codes(struct state *s,
                 putbits(s);
                 if (s->copy) {
                     // Show the data copied by the match.
-                    size_t i = (s->next - dist) & (MAXDIST-1);
-                    int n = len;
+                    size_t i = (s->next - len) & (MAXDIST-1);
                     do {
                         putval(s->window[i++], "copy", 0, s);
                         i &= MAXDIST-1;
-                    } while (--n);
+                    } while (i != s->next);
                     if (s->col) {
                         putc('\n', s->out);
                         s->col = 0;
