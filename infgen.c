@@ -1,5 +1,5 @@
 /*
-  infgen version 3.3, 20 June 2024
+  infgen version 3.4, 9 December 2024
 
   Copyright (C) 2005-2024 Mark Adler
 
@@ -226,7 +226,7 @@
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output. E.g. "! infgen 3.1 output".
+    generated the defgen format output. E.g. "! infgen 3.4 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
@@ -444,9 +444,11 @@
    3.1  19 Jul 2023  Detect and extract the zlib data from PNG files
    3.2  26 Jul 2023  Check PNG chunk CRCs
    3.3  20 Jun 2024  Add -bb option to include bit counts in binary output
+   3.4   9 Dec 2024  Add -m option to show data copied by each match
+                     Leave input and output pipes open when done
  */
 
-#define IG_VERSION "3.3"
+#define IG_VERSION "3.4"
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
