@@ -927,6 +927,8 @@ local int stored(struct state *s) {
     // Get length and check against its one's complement.
     unsigned len = bits(s, 16);
     unsigned cmp = bits(s, 16);
+    if (s->draw > 1)
+        putbits(s);
     if (len != (~cmp & 0xffff))
         return IG_STORED_LENGTH_ERR;            // didn't match complement!
     if (s->stats) {
