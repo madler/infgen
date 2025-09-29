@@ -1,7 +1,7 @@
 /*
-  infgen version 3.5, 26 December 2024
+  infgen version 3.6, 28 September 2024
 
-  Copyright (C) 2005-2024 Mark Adler
+  Copyright (C) 2005-2025 Mark Adler
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the author be held liable for any damages
@@ -247,7 +247,7 @@
     infgen comments:
 
     infgen starts with a comment line indicating the version of infgen that
-    generated the defgen format output. E.g. "! infgen 3.5 output".
+    generated the defgen format output. E.g. "! infgen 3.6 output".
 
     infgen inserts an empty comment, a line with just an exclamation mark,
     before each header, deflate block, and trailers.
@@ -468,9 +468,10 @@
    3.4   9 Dec 2024  Add -m option to show data copied by each match
                      Leave input and output pipes open when done
    3.5  26 Dec 2024  Add -c, -cc options to colorize textual output
+   3.6  28 Sep 2025  Fix delayed lengths bug in -dd display of stored blocks
  */
 
-#define IG_VERSION "3.5"
+#define IG_VERSION "3.6"
 
 #include <stdio.h>          // putc(), getc(), ungetc(), fputs(), fflush(),
                             // fopen(), fclose(), fprintf(), vfprintf(),
